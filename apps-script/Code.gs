@@ -393,14 +393,16 @@ function tuzatishTelefon() {
     if (c < 0) return;
     var rng = sh.getRange(2, c + 1, sh.getLastRow() - 1, 1);
     var formulas = rng.getFormulas();
+    var values = rng.getDisplayValues();
     formulas.forEach(function (f, i) {
-      var text = String(f[0] || '');
-      if (/^=\+?\d/.test(text)) {
+      var text = String(f[0] || values[i][0] || '');
+      if (/^=?\+?[\d ]{9,}$/.test(text.trim()) && normPhone_(text).length === 12 && String(values[i][0]).indexOf('#') === 0) {
         sh.getRange(i + 2, c + 1).setValue("'" + fmtPhone_(text));
         fixed++;
       }
     });
   });
+  Logger.log(fixed + ' ta raqam tuzatildi');
   return fixed + ' ta raqam tuzatildi';
 }
 
