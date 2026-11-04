@@ -117,6 +117,9 @@ function doPost(e) {
       case 'groups': return json_({ ok: true, items: listGroups_() });
       case 'getDay': return json_(getDay_(data));
       case 'saveDay': return json_(saveDay_(data));
+      case 'getCandidate': return json_(getCandidate_(data));
+      case 'updateAnketa': return json_(updateAnketa_(data, user));
+      case 'search': return json_({ ok: true, items: search_(data.q) });
       default: return json_({ ok: false, error: "Noma'lum amal" });
     }
   } catch (err) {
@@ -618,4 +621,142 @@ function notify_(text) {
 function testXabar() {
   notify_("✅ Nomzod Yo'li: bot xabarlari ishlayapti.");
   return 'Yuborildi';
+}
+
+
+// ---------------------------------------------------------------------------
+// Nomzod kartasi: ko'rish, tahrirlash, qidirish
+// ---------------------------------------------------------------------------
+// Ilova maydoni ↔ Anketa ustuni (oddiy matn maydonlari)
+var ANKETA_FIELDS = [
+  ['fio', "F.I.Sh."], ['millati', 'Millati'], ['oilaviy', 'Oilaviy holati'],
+  ['viloyat', 'Viloyat'], ['tuman', 'Shahar / tuman'], ['mahalla', 'Mahalla'], ['kocha', "Ko'cha"], ['uy', 'Uy'],
+  ['malumot', "Ma'lumoti"], ['otm', 'OTM nomi'], ['fakultet', 'Fakultet'], ['kurs', 'Kurs'],
+  ['kompyuter', 'Kompyuter savodxonligi'], ['rus', 'Rus tili'], ['ingliz', 'Ingliz tili'],
+  ['boshqaTil', 'Boshqa til'], ['boshqa', "Boshqa ko'nikma"], ['smena', 'Smena'],
+  ['nimaUchun', 'Nima uchun ishga olishimiz kerak'], ['tarif', "O'ziga ta'rif"],
+  ['vakansiya', 'Vakansiya'], ['manba', "E'lon manbai"],
+  ['muloqot', 'Muloqot (1-5)'], ['motivatsiya', 'Motivatsiya (1-5)'], ['korinish', "Tashqi ko'rinish (1-5)"],
+  ['izoh', 'HR izohi']
+];
+var PRE_GROUP = [STATUS.NEW, STATUS.RESERVE, STATUS.REJECTED];
+
+function monthToIso_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM');
+  var m = /^(\d{2})\.(\d{4})$/.exec(String(v || '').trim());
+  return m ? m[2] + '-' + m[1] : '';
+}
+
+function findRow_(t, id) {
+  return t.rows.filter(function (r) { return String(r['ID'] || r['Nomzod ID']) === String(id); })[0];
+}
+
+function getCandidate_(d) {
+  var id = String(d.id || '');
+  var a = findRow_(table_(SHEETS.ANKETA), id);
+  var n = findRow_(table_(SHEETS.NOMZODLAR), id);
+  if (!a || !n) throw userError_('Nomzod topilmadi: ' + id, 'notfound');
+  var out = {};
+  ANKETA_FIELDS.forEach(function (f) { var v = a[f[1]]; out[f[0]] = v === undefined || v === null ? '' : String(v); });
+  out.tugilgan = isoDate_(a["Tug'ilgan sana"]);
+  out.telefon = fmtPhone_(a['Telefon'] || n['Telefon']);
+  out.oylik = a["Oldingi o'rtacha oylik (so'm)"] ? String(a["Oldingi o'rtacha oylik (so'm)"]) : '';
+  out.dasturlar = String(a['Dasturlar'] || '').split(',').map(function (x) { return x.trim(); }).filter(String);
+  out.qaror = String(a['Qaror'] || '');
+  out.tasdiq = a["Ma'lumot tasdiqlandi"] === 'Ha';
+  out.hrName = String(a['HR'] || '');
+  out.ish = table_(SHEETS.ISH).rows.filter(function (r) { return String(r['Nomzod ID']) === id; }).map(function (r) {
+    return { tashkilot: String(r['Tashkilot'] || ''), lavozim: String(r['Lavozim'] || ''), boshlagan: monthToIso_(r['Boshlagan']),
+      tugatgan: monthToIso_(r['Tugatgan']), sabab: String(r["Bo'shash sababi"] || '') };
+  });
+  return {
+    ok: true, id: id, data: out,
+    meta: { holat: n['Holat'], guruh: n['Guruh'] || '', qoldirgan: n['Qoldirgan kunlar'], imtihon: n['Imtihon balli'],
+      suhbat: fmtDate_(n['Suhbat sanasi']), yangilangan: fmtDate_(n['Yangilangan']), hr: n['HR'],
+      canChangeDecision: PRE_GROUP.indexOf(n['Holat']) > -1 }
+  };
+}
+
+function updateAnketa_(d, user) {
+  var id = String(d.id || '');
+  var data = d.data || {};
+  REQUIRED.forEach(function (f) {
+    if (f[0] === 'qaror') return;
+    if (!data[f[0]] || String(data[f[0]]).trim() === '') throw userError_(f[1] + ' kiritilmagan', 'validation');
+  });
+  if (normPhone_(data.telefon).length !== 12) throw userError_("Telefon raqami to'liq emas", 'validation');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var at = table_(SHEETS.ANKETA), nt = table_(SHEETS.NOMZODLAR);
+    var a = findRow_(at, id), n = findRow_(nt, id);
+    if (!a || !n) throw userError_('Nomzod topilmadi: ' + id, 'notfound');
+    var now = new Date();
+    var ish = Array.isArray(data.ish) ? data.ish.filter(function (j) { return j && j.tashkilot; }) : [];
+    var months = ish.reduce(function (s, j) { return s + monthsBetween_(j.boshlagan, j.tugatgan); }, 0);
+    var birth = isoToDate_(data.tugilgan);
+    var phone = fmtPhone_(data.telefon);
+    var age = ageFrom_(data.tugilgan, now);
+    var holat = n['Holat'];
+    var canChange = PRE_GROUP.indexOf(holat) > -1;
+    var qaror = canChange && PRE_GROUP.indexOf(data.qaror) > -1 ? data.qaror : a['Qaror'];
+
+    var aVals = {};
+    ANKETA_FIELDS.forEach(function (f) { aVals[f[1]] = data[f[0]] == null ? '' : String(data[f[0]]); });
+    aVals["Tug'ilgan sana"] = birth; aVals['Yosh'] = age; aVals['Telefon'] = phone;
+    aVals['Ish tajribasi (oy)'] = months;
+    aVals["Oldingi o'rtacha oylik (so'm)"] = data.oylik ? Number(String(data.oylik).replace(/\D/g, '')) : '';
+    aVals['Dasturlar'] = (data.dasturlar || []).join(', ');
+    aVals['Qaror'] = qaror;
+    rowUpdate_(at, a, aVals);
+
+    var nVals = {};
+    nVals["F.I.Sh."] = data.fio; nVals['Telefon'] = phone; nVals["Tug'ilgan sana"] = birth; nVals['Yosh'] = age;
+    nVals['Vakansiya'] = data.vakansiya || ''; nVals["E'lon manbai"] = data.manba || ''; nVals['Yangilangan'] = now;
+    if (canChange) nVals['Holat'] = qaror;
+    rowUpdate_(nt, n, nVals);
+
+    // Ish tajribasi: eski qatorlarni o'chirib, yangisini yozamiz
+    var it = table_(SHEETS.ISH);
+    it.rows.filter(function (r) { return String(r['Nomzod ID']) === id; })
+      .map(function (r) { return r._row; }).sort(function (x, y) { return y - x; })
+      .forEach(function (rowNum) { it.sh.deleteRow(rowNum); });
+    ish.forEach(function (j) {
+      var r = {};
+      r['Nomzod ID'] = id; r["F.I.Sh."] = data.fio; r['Tashkilot'] = j.tashkilot; r['Lavozim'] = j.lavozim || '';
+      r['Boshlagan'] = fmtMonth_(j.boshlagan); r['Tugatgan'] = fmtMonth_(j.tugatgan); r["Bo'shash sababi"] = j.sabab || '';
+      appendObj_(it.sh, HEADERS.Ish_tajribasi, r);
+    });
+    // Davomat varag'idagi ism ham yangilansin
+    if (String(data.fio) !== String(n["F.I.Sh."])) {
+      var dv = table_(SHEETS.DAVOMAT);
+      dv.rows.forEach(function (r) { if (String(r['Nomzod ID']) === id) setCell_(dv, r._row, "F.I.Sh.", data.fio); });
+    }
+    return { ok: true, id: id, holat: canChange ? qaror : holat, decisionLocked: !canChange && data.qaror && data.qaror !== a['Qaror'] };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Faqat o'zgargan kataklarni yozadi */
+function rowUpdate_(t, row, vals) {
+  Object.keys(vals).forEach(function (h) {
+    var oldV = row[h], newV = vals[h];
+    var same = (oldV instanceof Date && newV instanceof Date) ? oldV.getTime() === newV.getTime() : String(oldV) === String(newV);
+    if (!same) setCell_(t, row._row, h, newV);
+  });
+}
+
+function search_(q) {
+  q = String(q || '').trim().toLowerCase();
+  if (q.length < 2) return [];
+  var digits = q.replace(/\D/g, '');
+  return table_(SHEETS.NOMZODLAR).rows.filter(function (r) {
+    var name = String(r["F.I.Sh."] || '').toLowerCase();
+    var id = String(r['ID'] || '').toLowerCase();
+    var ph = String(r['Telefon'] || '').replace(/\D/g, '');
+    return name.indexOf(q) > -1 || id.indexOf(q) > -1 || (digits.length >= 3 && ph.indexOf(digits) > -1);
+  }).reverse().slice(0, 30).map(function (r) {
+    return { id: r['ID'], date: fmtDate_(r['Suhbat sanasi']), name: r["F.I.Sh."], phone: r['Telefon'], vakansiya: r['Vakansiya'], holat: r['Holat'] };
+  });
 }

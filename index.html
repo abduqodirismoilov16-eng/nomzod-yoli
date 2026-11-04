@@ -77,6 +77,11 @@ main>.btn{flex:none}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:15px}
 .check input{width:22px;height:22px;margin:0;flex-shrink:0;accent-color:var(--accent)}
 .list{display:flex;flex-direction:column}
+.item[data-cand]{cursor:pointer;border-radius:8px}
+.item[data-cand]:hover .nm{color:var(--accent)}
+.item[data-cand]:focus-visible{outline:3px solid var(--accent-soft)}
+input[type=search]{width:100%;font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:11px 12px;outline:none}
+input[type=search]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .item{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
 .item:last-child{border-bottom:none}
 .item .nm{font-weight:600}
@@ -263,7 +268,7 @@ var STEPS = [
   { title:"Ko'nikmalar", render: stepKonikma, validate: function(d){ var e = {}; if (!d.kompyuter) e.kompyuter = 'Kompyuter savodxonligini tanlang'; return e; } },
   { title:"Suhbat va qaror", render: stepSuhbat, validate: function(d){ var e = {};
       if (!d.smena) e.smena = 'Smenani tanlang';
-      if (!d.qaror) e.qaror = "Qarorni tanlang"; return e; } },
+      if (!d.qaror && !(state.editMeta && !state.editMeta.canChangeDecision)) e.qaror = "Qarorni tanlang"; return e; } },
   { title:"Tekshirish va yuborish", render: stepReview, validate: function(d){ var e = {}; if (!d.tasdiq) e.tasdiq = "Nomzod ma'lumotlarini tasdiqlashi kerak"; return e; } }
 ];
 
@@ -308,6 +313,7 @@ function phoneCheckHtml(){
   var m = state.phoneMatches; if (!m) return '';
   if (m === 'loading') return '<div class="hint">Raqam tekshirilmoqda…</div>';
   if (m === 'error') return '';
+  m = m.filter(function(x){ return x.id !== state.editId; });
   if (!m.length) return '<div class="alert ok">Bu raqam bilan avval nomzod kelmagan.</div>';
   return '<div class="alert warn"><b>Bu nomzod avval kelgan.</b><ul>' + m.map(function(x){ return '<li>' + esc(x.date) + ' · ' + esc(x.name) + (x.vakansiya ? ' · ' + esc(x.vakansiya) : '') + ' · <b>' + esc(x.holat) + '</b></li>'; }).join('') + '</ul></div>';
 }
@@ -389,11 +395,19 @@ function stepSuhbat(){
   html += chips('motivatsiya', 'Motivatsiya', ['1','2','3','4','5'], { rate:true });
   html += chips('korinish', "Tashqi ko'rinish", ['1','2','3','4','5'], { rate:true });
   html += area('izoh', 'HR izohi', 'Umumiy taassurot, e\'tibor berish kerak bo\'lgan jihatlar');
-  html += chips('qaror', 'Qaror', OPTS.qaror, { req:true });
+  if (state.editMeta && !state.editMeta.canChangeDecision) html += '<div class="field"><span class="lbl">Qaror</span><div class="alert warn">Nomzod hozir: <b>' + esc(state.editMeta.holat) + '</b>. Guruhga qo\'shilgandan keyin qarorni bu yerda o\'zgartirib bo\'lmaydi.</div></div>';
+  else html += chips('qaror', 'Qaror', OPTS.qaror, { req:true });
   return html;
 }
 function stepReview(){
-  var d = state.d, total = d.ish.reduce(function(s,j){ return s + months(j.boshlagan, j.tugatgan); }, 0);
+  var d = state.d;
+  var html = summaryHtml(d);
+  html += '<div class="' + fCls('tasdiq') + '"><label class="check"><input type="checkbox" id="f-tasdiq"' + (d.tasdiq ? ' checked' : '') + '> Nomzod yuqoridagi ma\'lumotlar to\'g\'riligini tasdiqladi</label>' + errHtml('tasdiq') + '</div>';
+  if (state.submitError) html += '<div class="alert bad"><b>' + (state.editId ? 'Saqlanmadi.' : 'Yuborilmadi.') + '</b> ' + esc(state.submitError) + ' Ma\'lumotlar saqlangan, qayta urinib ko\'ring.</div>';
+  return html;
+}
+function summaryHtml(d){
+  var total = d.ish.reduce(function(s,j){ return s + months(j.boshlagan, j.tugatgan); }, 0);
   function r(k, v){ return v ? '<dt>' + k + '</dt><dd>' + esc(v) + '</dd>' : ''; }
   var html = '<dl class="review">' +
     '<h3>Shaxsiy</h3>' + r("F.I.Sh.", d.fio) + r("Tug'ilgan sana", fmtDate(d.tugilgan) + (age(d.tugilgan) !== null ? ' (' + age(d.tugilgan) + ' yosh)' : '')) + r('Telefon', d.telefon) + r('Millati', d.millati) + r('Oilaviy holati', d.oilaviy) +
@@ -404,8 +418,6 @@ function stepReview(){
     '<h3>Suhbat</h3>' + r('Vakansiya', d.vakansiya) + r("E'lon manbai", d.manba) + r('Smena', d.smena) + r('Nima uchun', d.nimaUchun) + r("O'ziga ta'rif", d.tarif) +
     r('Baho', [d.muloqot && 'Muloqot ' + d.muloqot, d.motivatsiya && 'Motivatsiya ' + d.motivatsiya, d.korinish && "Ko'rinish " + d.korinish].filter(Boolean).join(' · ')) + r('HR izohi', d.izoh) + r('Qaror', d.qaror) +
     '</dl>';
-  html += '<div class="' + fCls('tasdiq') + '"><label class="check"><input type="checkbox" id="f-tasdiq"' + (d.tasdiq ? ' checked' : '') + '> Nomzod yuqoridagi ma\'lumotlar to\'g\'riligini tasdiqladi</label>' + errHtml('tasdiq') + '</div>';
-  if (state.submitError) html += '<div class="alert bad"><b>Yuborilmadi.</b> ' + esc(state.submitError) + ' Ma\'lumotlar saqlangan, qayta urinib ko\'ring.</div>';
   return html;
 }
 
@@ -423,8 +435,9 @@ function render(){
   else if (s === 'done') html = demoBar + doneHtml();
   else if (s === 'gnew') html = demoBar + groupNewHtml();
   else if (s === 'day') html = demoBar + dayHtml();
+  else if (s === 'cand') html = demoBar + candHtml();
   app.innerHTML = html;
-  if (TG && TG.BackButton) { try { (s === 'form' || s === 'gnew' || s === 'day') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
+  if (TG && TG.BackButton) { try { (s === 'form' || s === 'gnew' || s === 'day' || s === 'cand') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
 }
 function homeHtml(){
   var tab = state.tab || 'anketa';
@@ -435,18 +448,29 @@ function homeHtml(){
   var draft = lsGet(DRAFT_KEY);
   if (draft && draft.d && draft.d.fio) html += '<div class="card"><b>Tugallanmagan anketa</b><span class="hint">' + esc(draft.d.fio) + ' · ' + (draft.step + 1) + '-qadam</span><div style="display:flex;gap:10px"><button class="btn ghost small" id="draft-del">O\'chirish</button><button class="btn small" id="draft-go" style="flex:1">Davom ettirish</button></div></div>';
   html += '<button class="btn" id="new">+ Yangi nomzod</button>';
-  html += '<section style="display:flex;flex-direction:column;gap:6px"><h2 style="font-size:17px">So\'nggi nomzodlar</h2>';
-  if (state.recentLoading) html += '<div class="spinner"></div>';
-  else if (!state.recent.length) html += '<p class="hint">Hali nomzod kiritilmagan. "Yangi nomzod" tugmasini bosib birinchi anketani to\'ldiring.</p>';
-  else html += '<div class="card list">' + state.recent.map(function(r){ return '<div class="item"><div><div class="nm">' + esc(r.name) + '</div><small>' + esc(r.id) + ' · ' + esc(r.date) + (r.vakansiya ? ' · ' + esc(r.vakansiya) : '') + '</small></div>' + statusPill(r.holat) + '</div>'; }).join('') + '</div>';
+  html += '<section style="display:flex;flex-direction:column;gap:8px"><input type="search" id="q" placeholder="Qidirish: ism, telefon yoki ID" autocomplete="off" value="' + esc(state.searchQ || '') + '">';
+  html += '<div id="cand-list">' + candListHtml() + '</div>';
   return html + '</section></main>';
+}
+function itemHtml(r){ return '<div class="item" role="button" tabindex="0" data-cand="' + esc(r.id) + '"><div><div class="nm">' + esc(r.name) + '</div><small>' + esc(r.id) + ' · ' + esc(r.date) + (r.vakansiya ? ' · ' + esc(r.vakansiya) : '') + '</small></div>' + statusPill(r.holat) + '</div>'; }
+function candListHtml(){
+  var q = (state.searchQ || '').trim();
+  if (q.length >= 2) {
+    if (state.searchLoading) return '<div class="spinner"></div>';
+    var res = state.searchRes || [];
+    return '<h2 style="font-size:17px">Qidiruv natijasi</h2>' + (res.length ? '<div class="card list">' + res.map(itemHtml).join('') + '</div>' : '<p class="hint">"' + esc(q) + '" bo\'yicha nomzod topilmadi.</p>');
+  }
+  var html = '<h2 style="font-size:17px">So\'nggi nomzodlar</h2>';
+  if (state.recentLoading) return html + '<div class="spinner"></div>';
+  if (!state.recent.length) return html + '<p class="hint">Hali nomzod kiritilmagan. "Yangi nomzod" tugmasini bosib birinchi anketani to\'ldiring.</p>';
+  return html + '<div class="card list">' + state.recent.map(itemHtml).join('') + '</div>';
 }
 function formHtml(){
   var st = STEPS[state.step], last = state.step === STEPS.length - 1, pct = Math.round((state.step + 1) / STEPS.length * 100);
-  return '<header class="top"><div class="top-row"><h1>' + esc(st.title) + '</h1><span class="sub">' + (state.step + 1) + ' / ' + STEPS.length + '</span></div><div class="bar"><i style="width:' + pct + '%"></i></div></header>' +
-    '<main id="form-main">' + st.render() + '<div class="saved" id="saved">' + (state.savedAt ? '✓ Qoralama saqlandi' : '') + '</div></main>' +
-    '<footer class="actions"><button class="btn ghost" id="back">' + (state.step === 0 ? 'Bosh sahifa' : 'Orqaga') + '</button>' +
-    '<button class="btn" id="next"' + (state.submitting ? ' disabled' : '') + '>' + (last ? (state.submitting ? 'Yuborilmoqda…' : 'Yuborish') : 'Keyingi') + '</button></footer>';
+  return '<header class="top">' + (state.editId ? '<div class="sub">Tahrirlash · ' + esc(state.editId) + '</div>' : '') + '<div class="top-row"><h1>' + esc(st.title) + '</h1><span class="sub">' + (state.step + 1) + ' / ' + STEPS.length + '</span></div><div class="bar"><i style="width:' + pct + '%"></i></div></header>' +
+    '<main id="form-main">' + st.render() + '<div class="saved" id="saved">' + (state.savedAt && !state.editId ? '✓ Qoralama saqlandi' : '') + '</div></main>' +
+    '<footer class="actions"><button class="btn ghost" id="back">' + (state.step === 0 ? (state.editId ? 'Bekor qilish' : 'Bosh sahifa') : 'Orqaga') + '</button>' +
+    '<button class="btn" id="next"' + (state.submitting ? ' disabled' : '') + '>' + (last ? (state.submitting ? 'Saqlanmoqda…' : (state.editId ? 'Saqlash' : 'Yuborish')) : 'Keyingi') + '</button></footer>';
 }
 function doneHtml(){
   return '<main class="center" style="justify-content:center;gap:16px"><div class="alert ok" style="width:100%">Anketa Sheets\'ga yozildi</div><div class="hint">Nomzod ID</div><div class="big-id">' + esc(state.lastId) + '</div>' +
@@ -456,13 +480,14 @@ function doneHtml(){
 /* ---------------- Actions ---------------- */
 var saveTimer = null;
 function saveDraft(){
+  if (state.editId || !state.d) return;
   lsSet(DRAFT_KEY, { d: state.d, step: state.step });
   state.savedAt = Date.now();
   var el = document.getElementById('saved'); if (el) el.textContent = '✓ Qoralama saqlandi';
 }
 function queueSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveDraft, 400); }
-function startNew(){ state.flash = null; state.d = emptyAnketa(); state.d.hrName = state.user && state.user.name || ''; state.step = 0; state.errors = {}; state.phoneMatches = null; state.jobEdit = null; state.submitError = ''; state.savedAt = 0; state.screen = 'form'; render(); scrollTop(); }
-function resume(){ var dr = lsGet(DRAFT_KEY); if (!dr) return startNew(); state.d = Object.assign(emptyAnketa(), dr.d); state.step = Math.min(dr.step || 0, STEPS.length - 1); state.errors = {}; state.jobEdit = null; state.submitError = ''; state.phoneMatches = null; state.screen = 'form'; render(); scrollTop(); if (phoneComplete(state.d.telefon)) checkPhone(); }
+function startNew(){ state.flash = null; state.editId = null; state.editMeta = null; state.d = emptyAnketa(); state.d.hrName = state.user && state.user.name || ''; state.step = 0; state.errors = {}; state.phoneMatches = null; state.jobEdit = null; state.submitError = ''; state.savedAt = 0; state.screen = 'form'; render(); scrollTop(); }
+function resume(){ var dr = lsGet(DRAFT_KEY); if (!dr) return startNew(); state.editId = null; state.editMeta = null; state.d = Object.assign(emptyAnketa(), dr.d); state.step = Math.min(dr.step || 0, STEPS.length - 1); state.errors = {}; state.jobEdit = null; state.submitError = ''; state.phoneMatches = null; state.screen = 'form'; render(); scrollTop(); if (phoneComplete(state.d.telefon)) checkPhone(); }
 function goHome(){ state.screen = 'home'; render(); loadRecent(); }
 function scrollTop(){ try { window.scrollTo(0,0); } catch(e){} }
 function next(){
@@ -471,10 +496,22 @@ function next(){
   if (state.step < STEPS.length - 1) { state.step++; saveDraft(); render(); scrollTop(); return; }
   submit();
 }
-function back(){ if (state.step === 0) { saveDraft(); goHome(); return; } state.step--; state.errors = {}; state.jobEdit = null; saveDraft(); render(); scrollTop(); }
+function back(){ if (state.step === 0) { if (state.editId) { openCand(state.editId); return; } saveDraft(); goHome(); return; } state.step--; state.errors = {}; state.jobEdit = null; saveDraft(); render(); scrollTop(); }
 function submit(){
   state.submitting = true; state.submitError = ''; render();
   var payload = Object.assign({}, state.d, { oylik: String(state.d.oylik).replace(/\D/g,'') });
+  if (state.editId) {
+    var eid = state.editId;
+    return api('updateAnketa', { id: eid, data: payload }).then(function(j){
+      state.submitting = false;
+      state.flash = { cls:'ok', text: "O'zgarishlar saqlandi." + (j.decisionLocked ? ' Qaror o\'zgarmadi, chunki nomzod allaqachon o\'qishda.' : '') };
+      state.d = null; state.editId = null; openCand(eid, true);
+      try { TG && TG.HapticFeedback && TG.HapticFeedback.notificationOccurred('success'); } catch(e){}
+    }).catch(function(e){
+      state.submitting = false; state.submitError = e && e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : (e.message || 'Xatolik.'); render();
+      var b = document.querySelector('.alert.bad'); if (b) b.scrollIntoView({ block:'center' });
+    });
+  }
   api('submitAnketa', payload).then(function(j){
     state.submitting = false; state.lastId = j.id; state.lastName = state.d.fio; state.lastQaror = state.d.qaror;
     lsDel(DRAFT_KEY); state.d = null; state.screen = 'done'; render(); scrollTop();
@@ -688,6 +725,54 @@ document.addEventListener('change', function(e){
   if (t.dataset && t.dataset.pick && state.gnew) { state.gnew.picked[t.dataset.pick] = t.checked; var b = document.getElementById('g-create'); var n = Object.keys(state.gnew.picked).filter(function(k){ return state.gnew.picked[k]; }).length; if (b) { b.disabled = !n; b.textContent = 'Guruh tuzish (' + n + ')'; } }
 });
 
+
+/* ================= Nomzod kartasi ================= */
+function openCand(id, keepFlash){
+  if (!keepFlash) state.flash = null;
+  state.cand = { id: id, loading: true, data: null, meta: null, error: '' }; state.screen = 'cand'; render(); scrollTop();
+  api('getCandidate', { id: id }).then(function(j){ state.cand.loading = false; state.cand.data = j.data; state.cand.meta = j.meta; render(); })
+    .catch(function(e){ state.cand.loading = false; state.cand.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; render(); });
+}
+function candHtml(){
+  var c = state.cand, html = '<header class="top"><div class="top-row"><div style="min-width:0"><div class="sub">' + esc(c.id) + '</div><h1>' + esc(c.data ? c.data.fio : 'Nomzod') + '</h1></div></div></header><main>';
+  html += flashHtml();
+  if (c.loading) return html + '<div class="spinner"></div></main>';
+  if (c.error) return html + '<div class="alert bad">' + esc(c.error) + '</div></main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button></footer>';
+  var m = c.meta;
+  html += '<div style="display:flex;gap:6px;flex-wrap:wrap">' + statusPill(m.holat) + (m.guruh ? '<span class="pill">Guruh ' + esc(m.guruh) + '</span>' : '') +
+    (m.qoldirgan ? '<span class="pill warn">' + esc(m.qoldirgan) + ' kun qoldirgan</span>' : '') + (m.imtihon !== '' && m.imtihon != null ? '<span class="pill ok">Imtihon: ' + esc(m.imtihon) + '</span>' : '') + '</div>';
+  html += '<p class="hint">Suhbat: ' + esc(m.suhbat) + (m.hr ? ' · HR: ' + esc(m.hr) : '') + (m.yangilangan && m.yangilangan !== m.suhbat ? ' · yangilangan ' + esc(m.yangilangan) : '') + '</p>';
+  var d = Object.assign(emptyAnketa(), c.data);
+  html += '<div class="card">' + summaryHtml(d) + '</div>';
+  return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit">Tahrirlash</button></footer>';
+}
+function editCand(){
+  var c = state.cand; if (!c || !c.data) return;
+  state.flash = null; state.editId = c.id; state.editMeta = c.meta;
+  state.d = Object.assign(emptyAnketa(), JSON.parse(JSON.stringify(c.data)));
+  state.d.oylik = money(state.d.oylik);
+  state.step = 0; state.errors = {}; state.phoneMatches = null; state.jobEdit = null; state.submitError = ''; state.savedAt = 0;
+  state.screen = 'form'; render(); scrollTop();
+}
+var searchTimer = null, searchSeq = 0;
+function runSearch(){
+  var q = (state.searchQ || '').trim(), my = ++searchSeq;
+  if (q.length < 2) { updateCandList(); return; }
+  state.searchLoading = true; updateCandList();
+  api('search', { q: q }).then(function(j){ if (my !== searchSeq) return; state.searchRes = j.items || []; })
+    .catch(function(){ if (my === searchSeq) state.searchRes = []; })
+    .then(function(){ if (my === searchSeq) { state.searchLoading = false; updateCandList(); } });
+}
+function updateCandList(){ var el = document.getElementById('cand-list'); if (el) el.innerHTML = candListHtml(); }
+document.addEventListener('click', function(e){
+  var it = e.target.closest('[data-cand]'); if (it) { openCand(it.dataset.cand); return; }
+  var t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'c-back') { goHome(); return; }
+  if (t.id === 'c-edit') { editCand(); return; }
+});
+document.addEventListener('keydown', function(e){ var it = e.target.closest && e.target.closest('[data-cand]'); if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openCand(it.dataset.cand); } });
+document.addEventListener('input', function(e){ if (e.target.id === 'q') { state.searchQ = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 350); } });
+
 /* ---------------- Boot ---------------- */
 function applyTheme(){
   if (!TG) return;
@@ -726,7 +811,7 @@ function updateFsBtn(){ var b = document.getElementById('fs-btn'); if (b) { b.in
 document.addEventListener('click', function(e){ var t = e.target.closest('#fs-btn'); if (t) toggleFs(); });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && isFs()) { e.preventDefault(); toggleFs(); } });
 function boot(){
-  if (TG) { try { TG.ready(); TG.expand(); goFullscreen(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); else if (state.screen === 'gnew' || state.screen === 'day') goGroups(); }); } catch(e){} }
+  if (TG) { try { TG.ready(); TG.expand(); goFullscreen(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); else if (state.screen === 'gnew' || state.screen === 'day') goGroups(); else if (state.screen === 'cand') goHome(); }); } catch(e){} }
   if (DEMO) { state.auth = { demo:true }; return api('config').then(afterAuth); }
   if (IN_TG) {
     state.auth = { initData: TG.initData };
