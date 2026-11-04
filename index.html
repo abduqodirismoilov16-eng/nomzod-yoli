@@ -29,6 +29,9 @@ body{padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,e
 #app{max-width:720px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
 header.top{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(14px + var(--tg-safe-area-inset-top,0px) + var(--tg-content-safe-area-inset-top,0px)) 16px 10px;display:flex;flex-direction:column;gap:10px;border-bottom:1px solid var(--line)}
 .top-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.icon-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13.5px;font-weight:600;color:var(--accent);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:7px 11px;cursor:pointer;flex-shrink:0}
+.icon-btn svg{width:16px;height:16px}
+.icon-btn:focus-visible{outline:3px solid var(--accent-soft)}
 .top h1{font-size:18px;margin:0;font-weight:700}
 .top .sub{font-size:13px;color:var(--muted)}
 .bar{height:5px;background:var(--line);border-radius:3px;overflow:hidden}
@@ -425,7 +428,7 @@ function render(){
 }
 function homeHtml(){
   var tab = state.tab || 'anketa';
-  var html = '<header class="top"><div class="top-row"><div><h1>Nomzod Yo\'li</h1><div class="sub">' + esc(state.user && state.user.name || '') + '</div></div></div>' +
+  var html = '<header class="top"><div class="top-row"><div><h1>Nomzod Yo\'li</h1><div class="sub">' + esc(state.user && state.user.name || '') + '</div></div>' + fsBtn() + '</div>' +
     '<div class="tabs" role="tablist"><button role="tab" id="tab-anketa" aria-selected="' + (tab === 'anketa') + '">Anketalar</button><button role="tab" id="tab-guruh" aria-selected="' + (tab === 'guruh') + '">Guruhlar va davomat</button></div></header><main>';
   html += flashHtml();
   if (tab === 'guruh') return html + groupsHtml() + '</main>';
@@ -700,12 +703,28 @@ function pinLogin(){
   api('config').then(function(j){ ssSet('nomzod_pin', v); state.pinError = ''; afterAuth(j); })
     .catch(function(e){ state.auth = null; state.pinError = e.message || "PIN noto'g'ri"; render(); });
 }
+/* To'liq ekran: Telegram 8.0+. Tanlov eslab qolinadi. */
+var FS_KEY = 'nomzod_toliq_ekran';
+function canFs(){ try { return !!(TG && TG.isVersionAtLeast && TG.isVersionAtLeast('8.0') && TG.requestFullscreen); } catch(e){ return false; } }
+function isFs(){ return !!(TG && TG.isFullscreen); }
 function goFullscreen(){
   try {
-    if (TG.isVersionAtLeast && TG.isVersionAtLeast('8.0') && TG.requestFullscreen && !TG.isFullscreen) TG.requestFullscreen();
+    if (canFs() && lsGet(FS_KEY) !== false && !TG.isFullscreen) TG.requestFullscreen();
     if (TG.isVersionAtLeast && TG.isVersionAtLeast('7.7') && TG.disableVerticalSwipes) TG.disableVerticalSwipes();
+    if (TG.onEvent) TG.onEvent('fullscreenChanged', updateFsBtn);
   } catch(e){}
 }
+function toggleFs(){
+  if (!canFs()) return;
+  try { if (isFs()) { TG.exitFullscreen(); lsSet(FS_KEY, false); } else { TG.requestFullscreen(); lsSet(FS_KEY, true); } } catch(e){}
+}
+var FS_ICON_IN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>';
+var FS_ICON_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></svg>';
+function fsBtnInner(){ return isFs() ? FS_ICON_OUT + '<span>Kichraytirish</span>' : FS_ICON_IN + '<span>To\'liq ekran</span>'; }
+function fsBtn(){ return canFs() ? '<button type="button" class="icon-btn" id="fs-btn" title="' + (isFs() ? 'Kichik oynaga qaytish (Esc)' : "To'liq ekranga chiqish") + '">' + fsBtnInner() + '</button>' : ''; }
+function updateFsBtn(){ var b = document.getElementById('fs-btn'); if (b) { b.innerHTML = fsBtnInner(); b.title = isFs() ? 'Kichik oynaga qaytish (Esc)' : "To'liq ekranga chiqish"; } }
+document.addEventListener('click', function(e){ var t = e.target.closest('#fs-btn'); if (t) toggleFs(); });
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && isFs()) { e.preventDefault(); toggleFs(); } });
 function boot(){
   if (TG) { try { TG.ready(); TG.expand(); goFullscreen(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); else if (state.screen === 'gnew' || state.screen === 'day') goGroups(); }); } catch(e){} }
   if (DEMO) { state.auth = { demo:true }; return api('config').then(afterAuth); }
