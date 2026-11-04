@@ -92,6 +92,26 @@ main>.btn{flex:none}
 .spinner{width:22px;height:22px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite;margin:40px auto}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spinner{animation-duration:3s}.bar i{transition:none}}
+.tabs{display:flex;gap:6px;background:var(--line);padding:4px;border-radius:12px}
+.tabs button{flex:1;font:inherit;font-weight:600;font-size:14.5px;border:none;border-radius:9px;padding:9px;background:transparent;color:var(--muted);cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.days{display:flex;gap:6px;flex-wrap:wrap}
+.days button{font:inherit;font-size:14px;min-width:52px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;padding:7px 10px;cursor:pointer}
+.days button.done{border-color:var(--ok);color:var(--ok);font-weight:600}
+.att{display:flex;flex-direction:column;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}
+.att:last-child{border-bottom:none}
+.att-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.att-top .nm{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.seg{display:flex;gap:6px}
+.seg button{flex:1;font:inherit;font-size:14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;padding:9px 4px;cursor:pointer;min-height:42px}
+.seg button[aria-pressed="true"][data-v="Keldi"]{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+.seg button[aria-pressed="true"][data-v="Kechikdi"]{background:var(--warn);border-color:var(--warn);color:#fff;font-weight:600}
+.seg button[aria-pressed="true"][data-v="Kelmadi"]{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
+.att .rate .chip{min-height:36px;padding:5px 0;font-size:14px}
+.att.off{opacity:.6}
+.pick{display:flex;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.pick:last-child{border-bottom:none}
+.pick input{width:22px;height:22px;accent-color:var(--accent);flex-shrink:0;margin:0}
 .demo{font-size:12px;background:var(--warn-soft);color:var(--warn);text-align:center;padding:6px}
 </style>
 </head>
@@ -181,6 +201,19 @@ function demoApi(action, data){
       smenalar:['Kunduzgi','Kechki','Tungi',"Farqi yo'q"], millatlar:["O'zbek","Rus","Qozoq","Tojik","Qoraqalpoq","Boshqa"] } });
     else if (action === 'checkPhone') res({ ok:true, matches: demoDb.rows.filter(function(r){ return digits(r.phone) === digits(data.phone); }) });
     else if (action === 'recent') res({ ok:true, items: demoDb.rows.slice().reverse() });
+    else if (action === 'groupCandidates') res({ ok:true, items: demoDb.rows.filter(function(r){ return /taklif/.test(r.holat) && !r.group; }).map(function(r){ return { id:r.id, name:r.name, vakansiya:r.vakansiya, date:r.date }; }) });
+    else if (action === 'createGroup') { demoDb.g = (demoDb.g || 0) + 1; var gname = '#' + demoDb.g; var st = new Date(data.start); var ex = new Date(st.getTime() + 5*864e5);
+      demoDb.rows.forEach(function(r){ if (data.ids.indexOf(r.id) > -1) { r.group = gname; r.holat = "O'qishda"; } });
+      (demoDb.groups = demoDb.groups || []).push({ group:gname, start:data.start, exam: ex.toISOString().slice(0,10), att:{} }); res({ ok:true, group:gname, count:data.ids.length, exam: ex.toISOString().slice(0,10) }); }
+    else if (action === 'groups') res({ ok:true, items: (demoDb.groups || []).slice().reverse().map(function(g){ var mem = demoDb.rows.filter(function(r){ return r.group === g.group; });
+      return { group:g.group, start:g.start, exam:g.exam, total:mem.length, studying: mem.filter(function(r){ return r.holat === "O'qishda"; }).length, expelled: mem.filter(function(r){ return r.holat === 'Chetlatildi'; }).length, daysDone: Object.keys(g.att).map(Number) }; }) });
+    else if (action === 'getDay') { var g = demoDb.groups.filter(function(x){ return x.group === data.group; })[0];
+      res({ ok:true, threshold:2, items: demoDb.rows.filter(function(r){ return r.group === data.group; }).map(function(r){ var abs = 0; Object.keys(g.att).forEach(function(d){ if (+d !== data.day && g.att[d][r.id] && g.att[d][r.id].holat === 'Kelmadi') abs++; });
+        return { id:r.id, name:r.name, status:r.holat, absences:abs, entry: g.att[data.day] && g.att[data.day][r.id] || null }; }) }); }
+    else if (action === 'saveDay') { var g2 = demoDb.groups.filter(function(x){ return x.group === data.group; })[0]; g2.att[data.day] = {}; data.entries.forEach(function(e){ g2.att[data.day][e.id] = e; });
+      var exp = [], warn = []; demoDb.rows.filter(function(r){ return r.group === data.group; }).forEach(function(r){ var abs = 0; Object.keys(g2.att).forEach(function(d){ if (g2.att[d][r.id] && g2.att[d][r.id].holat === 'Kelmadi') abs++; });
+        if (abs >= 2 && r.holat === "O'qishda") { r.holat = 'Chetlatildi'; exp.push(r.name); } else if (abs === 1 && data.entries.some(function(e){ return e.id === r.id && e.holat === 'Kelmadi'; })) warn.push(r.name); });
+      res({ ok:true, expelled:exp, warned:warn, restored:[] }); }
     else if (action === 'submitAnketa') {
       demoDb.seq++; var id = 'N-DEMO-' + ('000' + demoDb.seq).slice(-4);
       demoDb.rows.push({ id:id, date:new Date().toLocaleDateString('ru-RU'), name:data.fio, phone:fmtPhone(data.telefon), vakansiya:data.vakansiya, holat:data.qaror });
@@ -385,11 +418,18 @@ function render(){
   else if (s === 'home') html = demoBar + homeHtml();
   else if (s === 'form') html = demoBar + formHtml();
   else if (s === 'done') html = demoBar + doneHtml();
+  else if (s === 'gnew') html = demoBar + groupNewHtml();
+  else if (s === 'day') html = demoBar + dayHtml();
   app.innerHTML = html;
-  if (TG && TG.BackButton) { try { (s === 'form') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
+  if (TG && TG.BackButton) { try { (s === 'form' || s === 'gnew' || s === 'day') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
 }
 function homeHtml(){
-  var draft = lsGet(DRAFT_KEY), html = '<header class="top"><div class="top-row"><div><h1>Nomzod Yo\'li</h1><div class="sub">' + esc(state.user && state.user.name || '') + '</div></div></div></header><main>';
+  var tab = state.tab || 'anketa';
+  var html = '<header class="top"><div class="top-row"><div><h1>Nomzod Yo\'li</h1><div class="sub">' + esc(state.user && state.user.name || '') + '</div></div></div>' +
+    '<div class="tabs" role="tablist"><button role="tab" id="tab-anketa" aria-selected="' + (tab === 'anketa') + '">Anketalar</button><button role="tab" id="tab-guruh" aria-selected="' + (tab === 'guruh') + '">Guruhlar va davomat</button></div></header><main>';
+  html += flashHtml();
+  if (tab === 'guruh') return html + groupsHtml() + '</main>';
+  var draft = lsGet(DRAFT_KEY);
   if (draft && draft.d && draft.d.fio) html += '<div class="card"><b>Tugallanmagan anketa</b><span class="hint">' + esc(draft.d.fio) + ' · ' + (draft.step + 1) + '-qadam</span><div style="display:flex;gap:10px"><button class="btn ghost small" id="draft-del">O\'chirish</button><button class="btn small" id="draft-go" style="flex:1">Davom ettirish</button></div></div>';
   html += '<button class="btn" id="new">+ Yangi nomzod</button>';
   html += '<section style="display:flex;flex-direction:column;gap:6px"><h2 style="font-size:17px">So\'nggi nomzodlar</h2>';
@@ -418,7 +458,7 @@ function saveDraft(){
   var el = document.getElementById('saved'); if (el) el.textContent = '✓ Qoralama saqlandi';
 }
 function queueSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveDraft, 400); }
-function startNew(){ state.d = emptyAnketa(); state.d.hrName = state.user && state.user.name || ''; state.step = 0; state.errors = {}; state.phoneMatches = null; state.jobEdit = null; state.submitError = ''; state.savedAt = 0; state.screen = 'form'; render(); scrollTop(); }
+function startNew(){ state.flash = null; state.d = emptyAnketa(); state.d.hrName = state.user && state.user.name || ''; state.step = 0; state.errors = {}; state.phoneMatches = null; state.jobEdit = null; state.submitError = ''; state.savedAt = 0; state.screen = 'form'; render(); scrollTop(); }
 function resume(){ var dr = lsGet(DRAFT_KEY); if (!dr) return startNew(); state.d = Object.assign(emptyAnketa(), dr.d); state.step = Math.min(dr.step || 0, STEPS.length - 1); state.errors = {}; state.jobEdit = null; state.submitError = ''; state.phoneMatches = null; state.screen = 'form'; render(); scrollTop(); if (phoneComplete(state.d.telefon)) checkPhone(); }
 function goHome(){ state.screen = 'home'; render(); loadRecent(); }
 function scrollTop(){ try { window.scrollTo(0,0); } catch(e){} }
@@ -521,6 +561,130 @@ document.addEventListener('click', function(e){
 });
 document.addEventListener('keydown', function(e){ if (e.key === 'Enter' && e.target.id === 'pin') pinLogin(); });
 
+
+/* ================= 2-bosqich: guruhlar va davomat ================= */
+function fmtIso(iso){ var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso||''); return m ? m[3] + '.' + m[2] : ''; }
+function groupsHtml(){
+  var html = '<button class="btn" id="g-new">+ Yangi guruh</button>';
+  if (state.groupsLoading) return html + '<div class="spinner"></div>';
+  var gs = state.groups || [];
+  if (!gs.length) return html + '<p class="hint">Hali guruh yo\'q. Suhbatda "O\'qishga taklif qilindi" deb belgilangan nomzodlardan guruh tuzing.</p>';
+  return html + gs.map(function(g){
+    return '<div class="card"><div class="job"><div><b style="font-size:17px">Guruh ' + esc(g.group) + '</b><small>' + fmtIso(g.start) + ' dan boshlangan · imtihon ' + fmtIso(g.exam) + '</small></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span class="pill">' + g.studying + ' o\'qishda</span>' + (g.expelled ? '<span class="pill bad">' + g.expelled + ' chetlatildi</span>' : '') + '</div></div>' +
+      '<span class="lbl">Davomat kuni</span><div class="days">' + [1,2,3,4,5].map(function(d){ var done = g.daysDone.indexOf(d) > -1;
+        return '<button type="button" class="' + (done ? 'done' : '') + '" data-day="' + d + '" data-group="' + esc(g.group) + '">' + (done ? '✓ ' : '') + d + '-kun</button>'; }).join('') + '</div></div>';
+  }).join('');
+}
+function loadGroups(){
+  state.groupsLoading = true; render();
+  api('groups').then(function(j){ state.groups = j.items || []; }).catch(function(e){ state.groups = []; toastErr(e); })
+    .then(function(){ state.groupsLoading = false; if (state.screen === 'home') render(); });
+}
+function goGroups(){ state.tab = 'guruh'; state.screen = 'home'; render(); loadGroups(); scrollTop(); }
+function toastErr(e){ state.flash = { cls:'bad', text: (e && e.message === 'Failed to fetch') ? "Internet aloqasi yo'q." : (e && e.message || 'Xatolik') }; }
+function flashHtml(){ if (!state.flash) return ''; var f = state.flash; return '<div class="alert ' + f.cls + '">' + f.text + '</div>'; }
+
+function tomorrowIso(){ var d = new Date(); d.setDate(d.getDate() + 1); return d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function openGroupNew(){
+state.flash = null;   state.gnew = { start: tomorrowIso(), items: null, picked: {}, saving: false, error: '' }; state.screen = 'gnew'; render(); scrollTop();
+  api('groupCandidates').then(function(j){ state.gnew.items = j.items || []; state.gnew.items.forEach(function(c){ state.gnew.picked[c.id] = true; }); render(); })
+    .catch(function(e){ state.gnew.items = []; state.gnew.error = e.message; render(); });
+}
+function groupNewHtml(){
+  var g = state.gnew, html = '<header class="top"><div class="top-row"><h1>Yangi guruh</h1></div></header><main>';
+  html += '<div class="field"><label for="g-start" class="req">O\'qish boshlanadigan kun</label><input id="g-start" type="date" value="' + esc(g.start) + '"><div class="hint">Imtihon 6-kuni bo\'ladi.</div></div>';
+  html += '<div class="field"><span class="lbl">O\'qishga taklif qilingan nomzodlar</span>';
+  if (!g.items) html += '<div class="spinner"></div>';
+  else if (!g.items.length) html += '<p class="hint">Guruhga qo\'shiladigan nomzod yo\'q. Avval suhbatda nomzodni "O\'qishga taklif qilindi" deb belgilang.</p>';
+  else html += '<div class="card list" style="gap:0;padding-block:2px">' + g.items.map(function(c){ return '<label class="pick"><input type="checkbox" data-pick="' + esc(c.id) + '"' + (g.picked[c.id] ? ' checked' : '') + '><span><b>' + esc(c.name) + '</b><br><small class="hint">' + esc(c.id) + ' · suhbat ' + esc(c.date) + (c.vakansiya ? ' · ' + esc(c.vakansiya) : '') + '</small></span></label>'; }).join('') + '</div>';
+  html += '</div>';
+  if (g.error) html += '<div class="alert bad">' + esc(g.error) + '</div>';
+  var n = Object.keys(g.picked).filter(function(k){ return g.picked[k]; }).length;
+  return html + '</main><footer class="actions"><button class="btn ghost" id="g-cancel">Bekor qilish</button><button class="btn" id="g-create"' + (!n || g.saving ? ' disabled' : '') + '>' + (g.saving ? 'Saqlanmoqda…' : 'Guruh tuzish (' + n + ')') + '</button></footer>';
+}
+function createGroup(){
+  var g = state.gnew, ids = Object.keys(g.picked).filter(function(k){ return g.picked[k]; });
+  g.saving = true; g.error = ''; render();
+  api('createGroup', { start: g.start, ids: ids }).then(function(j){
+    state.flash = { cls:'ok', text: 'Guruh <b>' + esc(j.group) + '</b> tuzildi: ' + j.count + ' nomzod. Imtihon ' + fmtIso(j.exam) + ' kuni.' }; goGroups();
+  }).catch(function(e){ g.saving = false; g.error = e.message; render(); });
+}
+
+function openDay(group, day){
+state.flash = null;   state.dayv = { group: group, day: day, items: null, marks: {}, threshold: 2, saving: false, error: '', open: {} }; state.screen = 'day'; render(); scrollTop();
+  api('getDay', { group: group, day: day }).then(function(j){
+    var v = state.dayv; v.items = j.items; v.threshold = j.threshold;
+    j.items.forEach(function(it){ v.marks[it.id] = it.entry ? { holat: it.entry.holat, baho: it.entry.baho ? String(it.entry.baho) : '', izoh: it.entry.izoh || '' } : { holat:'', baho:'', izoh:'' }; });
+    render();
+  }).catch(function(e){ state.dayv.items = []; state.dayv.error = e.message; render(); });
+}
+function dayHtml(){
+  var v = state.dayv, html = '<header class="top"><div class="top-row"><h1>Guruh ' + esc(v.group) + ' · ' + v.day + '-kun</h1></div>';
+  if (v.items && v.items.length) {
+    var c = { Keldi:0, Kechikdi:0, Kelmadi:0 }; Object.keys(v.marks).forEach(function(k){ var h = v.marks[k].holat; if (c[h] != null) c[h]++; });
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap"><span class="pill ok">Keldi ' + c.Keldi + '</span><span class="pill warn">Kechikdi ' + c.Kechikdi + '</span><span class="pill bad">Kelmadi ' + c.Kelmadi + '</span></div>';
+  }
+  html += '</header><main>';
+  if (!v.items) return html + '<div class="spinner"></div></main>';
+  if (!v.items.length) return html + '<p class="hint">Bu guruhda nomzod yo\'q.</p>' + (v.error ? '<div class="alert bad">' + esc(v.error) + '</div>' : '') + '</main>';
+  html += '<button class="btn ghost small" id="all-present" style="align-self:flex-start">Hammasi keldi</button>';
+  html += '<div class="card" style="gap:0;padding-block:2px">' + v.items.map(function(it){
+    var m = v.marks[it.id], total = it.absences + (m.holat === 'Kelmadi' ? 1 : 0), off = it.status === 'Chetlatildi' && total >= v.threshold;
+    var warn = '';
+    if (m.holat === 'Kelmadi' && total >= v.threshold) warn = '<div class="alert bad" style="padding:8px 10px;font-size:13.5px">' + total + '-marta qoldirdi. Saqlanganda chetlatiladi.</div>';
+    else if (m.holat === 'Kelmadi') warn = '<div class="alert warn" style="padding:8px 10px;font-size:13.5px">1-marta qoldirdi. Yana bir marta qoldirsa chetlatiladi.</div>';
+    return '<div class="att' + (off ? ' off' : '') + '"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' +
+      (off ? '<span class="pill bad">Chetlatilgan</span>' : it.absences ? '<span class="pill warn">' + it.absences + ' kun qoldirgan</span>' : '') + '</div>' +
+      '<div class="seg" role="group" aria-label="Davomat">' + ['Keldi','Kechikdi','Kelmadi'].map(function(h){ return '<button type="button" data-att="' + esc(it.id) + '" data-v="' + h + '" aria-pressed="' + (m.holat === h) + '">' + h + '</button>'; }).join('') + '</div>' + warn +
+      (m.holat && m.holat !== 'Kelmadi' ? '<div class="chips rate" role="group" aria-label="Bugungi o\'zlashtirish">' + ['1','2','3','4','5'].map(function(b){ return '<button type="button" class="chip" data-baho="' + esc(it.id) + '" data-v="' + b + '" aria-pressed="' + (m.baho === b) + '">' + b + '</button>'; }).join('') + '</div>' : '') +
+      (v.open[it.id] || m.izoh ? '<input type="text" data-izoh="' + esc(it.id) + '" placeholder="Izoh" value="' + esc(m.izoh) + '">' : '<button type="button" class="link" style="align-self:flex-start;padding:0" data-izoh-open="' + esc(it.id) + '">+ Izoh</button>') +
+      '</div>';
+  }).join('') + '</div>';
+  if (v.error) html += '<div class="alert bad">' + esc(v.error) + '</div>';
+  return html + '</main><footer class="actions"><button class="btn ghost" id="d-back">Orqaga</button><button class="btn" id="d-save"' + (v.saving ? ' disabled' : '') + '>' + (v.saving ? 'Saqlanmoqda…' : 'Saqlash') + '</button></footer>';
+}
+function saveDay(){
+  var v = state.dayv;
+  var missing = v.items.filter(function(it){ return it.status !== 'Chetlatildi' && !v.marks[it.id].holat; });
+  if (missing.length) { v.error = 'Davomat belgilanmagan: ' + missing.map(function(x){ return x.name; }).join(', '); render(); var b = document.querySelector('.alert.bad'); b && b.scrollIntoView({ block:'center' }); return; }
+  var entries = v.items.filter(function(it){ return v.marks[it.id].holat; }).map(function(it){ var m = v.marks[it.id]; return { id: it.id, holat: m.holat, baho: m.baho, izoh: m.izoh }; });
+  v.saving = true; v.error = ''; render();
+  api('saveDay', { group: v.group, day: v.day, entries: entries }).then(function(j){
+    var parts = [v.day + '-kun davomati saqlandi.'];
+    if (j.expelled && j.expelled.length) parts.push('Chetlatildi: <b>' + j.expelled.map(esc).join(', ') + '</b>.');
+    if (j.warned && j.warned.length) parts.push('Ogohlantirish: ' + j.warned.map(esc).join(', ') + '.');
+    if (j.restored && j.restored.length) parts.push("Qayta tiklandi: " + j.restored.map(esc).join(', ') + '.');
+    state.flash = { cls: j.expelled && j.expelled.length ? 'warn' : 'ok', text: parts.join(' ') }; goGroups();
+  }).catch(function(e){ v.saving = false; v.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q. Qayta urinib ko'ring." : e.message; render(); });
+}
+document.addEventListener('click', function(e){
+  var t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'tab-anketa') { state.flash = null; state.tab = 'anketa'; render(); loadRecent(); return; }
+  if (t.id === 'tab-guruh') { goGroups(); return; }
+  if (t.id === 'g-new') return openGroupNew();
+  if (t.id === 'g-cancel' || t.id === 'd-back') return goGroups();
+  if (t.id === 'g-create') return createGroup();
+  if (t.id === 'd-save') return saveDay();
+  if (t.dataset.day) return openDay(t.dataset.group, +t.dataset.day);
+  var v = state.dayv; if (!v || state.screen !== 'day') return;
+  if (t.dataset.att || t.id === 'all-present') v.error = '';
+  if (t.id === 'all-present') { v.items.forEach(function(it){ if (it.status !== 'Chetlatildi' && !v.marks[it.id].holat) v.marks[it.id].holat = 'Keldi'; }); haptic(); keepScroll(); return; }
+  if (t.dataset.att) { var m = v.marks[t.dataset.att]; m.holat = m.holat === t.dataset.v ? '' : t.dataset.v; if (m.holat === 'Kelmadi') m.baho = ''; haptic(); keepScroll(); return; }
+  if (t.dataset.baho) { var mb = v.marks[t.dataset.baho]; mb.baho = mb.baho === t.dataset.v ? '' : t.dataset.v; haptic(); keepScroll(); return; }
+  if (t.dataset.izohOpen) { v.open[t.dataset.izohOpen] = true; keepScroll(); var x = document.querySelector('[data-izoh="' + t.dataset.izohOpen + '"]'); x && x.focus(); return; }
+});
+function keepScroll(){ var y = window.scrollY; render(); window.scrollTo(0, y); }
+document.addEventListener('input', function(e){
+  var t = e.target;
+  if (t.dataset && t.dataset.izoh && state.dayv) state.dayv.marks[t.dataset.izoh].izoh = t.value;
+});
+document.addEventListener('change', function(e){
+  var t = e.target;
+  if (t.id === 'g-start' && state.gnew) state.gnew.start = t.value;
+  if (t.dataset && t.dataset.pick && state.gnew) { state.gnew.picked[t.dataset.pick] = t.checked; var b = document.getElementById('g-create'); var n = Object.keys(state.gnew.picked).filter(function(k){ return state.gnew.picked[k]; }).length; if (b) { b.disabled = !n; b.textContent = 'Guruh tuzish (' + n + ')'; } }
+});
+
 /* ---------------- Boot ---------------- */
 function applyTheme(){
   if (!TG) return;
@@ -537,7 +701,7 @@ function pinLogin(){
     .catch(function(e){ state.auth = null; state.pinError = e.message || "PIN noto'g'ri"; render(); });
 }
 function boot(){
-  if (TG) { try { TG.ready(); TG.expand(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); }); } catch(e){} }
+  if (TG) { try { TG.ready(); TG.expand(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); else if (state.screen === 'gnew' || state.screen === 'day') goGroups(); }); } catch(e){} }
   if (DEMO) { state.auth = { demo:true }; return api('config').then(afterAuth); }
   if (IN_TG) {
     state.auth = { initData: TG.initData };
