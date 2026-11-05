@@ -126,6 +126,7 @@ function doPost(e) {
       case 'recent': return json_({ ok: true, items: recent_(20) });
       case 'groupCandidates': return json_({ ok: true, items: groupCandidates_() });
       case 'createGroup': return json_(createGroup_(data));
+      case 'addToGroup': return json_(addToGroup_(data));
       case 'groups': return json_({ ok: true, items: listGroups_() });
       case 'getDay': return json_(getDay_(data));
       case 'saveDay': return json_(saveDay_(data));
@@ -510,6 +511,35 @@ function createGroup_(d) {
     row['Nomzodlar soni'] = picked.length; row['Holat'] = 'Faol';
     appendObj_(g.sh, HEADERS.Guruhlar, row);
     return { ok: true, group: name, count: picked.length, exam: isoDate_(exam) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Mavjud guruhga yangi nomzodlarni qo'shadi (o'qish boshlangandan keyin kelganlar uchun). */
+function addToGroup_(d) {
+  var group = String(d.group || '');
+  var ids = Array.isArray(d.ids) ? d.ids.map(String) : [];
+  if (!ids.length) throw userError_('Kamida bitta nomzodni tanlang', 'validation');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var g = table_(SHEETS.GURUHLAR);
+    var gr = g.rows.filter(function (r) { return String(r['Guruh']) === group; })[0];
+    if (!gr) throw userError_('Guruh topilmadi', 'validation');
+    var n = table_(SHEETS.NOMZODLAR);
+    var picked = n.rows.filter(function (r) { return ids.indexOf(String(r['ID'])) > -1 && r['Holat'] === STATUS.NEW && !r['Guruh']; });
+    if (!picked.length) throw userError_("Tanlangan nomzodlar allaqachon guruhga qo'shilgan", 'validation');
+    var now = new Date();
+    picked.forEach(function (r) {
+      setCell_(n, r._row, 'Guruh', group);
+      setCell_(n, r._row, 'Holat', STATUS.STUDYING);
+      setCell_(n, r._row, 'Qoldirgan kunlar', 0);
+      setCell_(n, r._row, 'Yangilangan', now);
+    });
+    var total = n.rows.filter(function (r) { return String(r['Guruh']) === group; }).length + picked.length;
+    setCell_(g, gr._row, 'Nomzodlar soni', total);
+    return { ok: true, group: group, count: picked.length };
   } finally {
     lock.releaseLock();
   }
@@ -1071,7 +1101,7 @@ function onTraineeMessage_(m) {
   if (c['Holat'] === STATUS.EXPELLED) {
     return send_(chat, "Siz o'qishdan chetlatilgansiz, shuning uchun qo'llanmalar yuborilmaydi. Savol bo'lsa, HR bilan bog'laning.", { remove_keyboard: true });
   }
-  if (text.indexOf('/start') === 0) return welcome_(chat, c);
+  if (text.indexOf('/start') === 0) { welcome_(chat, c); return deliverPending_(c); }
   if (text === BTN.MATS) return showDays_(chat, c);
   if (text === BTN.PLAN) return showPlan_(chat, c);
   if (text === BTN.ASK) return send_(chat, 'Savolingizni bitta xabarda yozib yuboring. HR javob berganda shu yerga keladi.', traineeKb_());
@@ -1129,9 +1159,10 @@ function welcome_(chat, c) {
 /** Nomzod botga kech ulansa, HR allaqachon yuborgan kunlarni unga yetkazadi. */
 function deliverPending_(c) {
   var id = String(c['ID']);
-  var rows = logRows_(c['Guruh']).filter(function (r) { return String(r['Nomzod ID']) === id && r['Holat'] !== LOG_ST.SENT; });
-  var days = {};
-  rows.forEach(function (r) { days[Number(r['Kun'])] = true; });
+  // HR yuborgan, lekin bu nomzod hali olmagan kunlar (kech ulangan yoki guruhga keyin qo'shilgan)
+  var all = logRows_(c['Guruh']), got = {}, days = {};
+  all.forEach(function (r) { if (String(r['Nomzod ID']) === id && r['Holat'] === LOG_ST.SENT) got[Number(r['Kun'])] = true; });
+  all.forEach(function (r) { var k = Number(r['Kun']); if (!got[k]) days[k] = true; });
   Object.keys(days).map(Number).sort(function (a, b) { return a - b; }).forEach(function (day) {
     var mats = materials_(day);
     if (!mats.length) return;

@@ -213,6 +213,7 @@ function demoApi(action, data){
     else if (action === 'createGroup') { demoDb.g = (demoDb.g || 0) + 1; var gname = '#' + demoDb.g; var st = new Date(data.start); var ex = new Date(st.getTime() + 5*864e5);
       demoDb.rows.forEach(function(r){ if (data.ids.indexOf(r.id) > -1) { r.group = gname; r.holat = "O'qishda"; } });
       (demoDb.groups = demoDb.groups || []).push({ group:gname, start:data.start, exam: ex.toISOString().slice(0,10), att:{} }); res({ ok:true, group:gname, count:data.ids.length, exam: ex.toISOString().slice(0,10) }); }
+    else if (action === 'addToGroup') { demoDb.rows.forEach(function(r){ if (data.ids.indexOf(r.id) > -1) { r.group = data.group; r.holat = "O'qishda"; } }); res({ ok:true, group:data.group, count:data.ids.length }); }
     else if (action === 'groups') res({ ok:true, items: (demoDb.groups || []).slice().reverse().map(function(g){ var mem = demoDb.rows.filter(function(r){ return r.group === g.group; });
       return { group:g.group, start:g.start, exam:g.exam, total:mem.length, studying: mem.filter(function(r){ return r.holat === "O'qishda"; }).length, expelled: mem.filter(function(r){ return r.holat === 'Chetlatildi'; }).length, daysDone: Object.keys(g.att).map(Number) }; }) });
     else if (action === 'getDay') { var g = demoDb.groups.filter(function(x){ return x.group === data.group; })[0];
@@ -612,6 +613,7 @@ function groupsHtml(){
   return html + gs.map(function(g){
     return '<div class="card"><div class="job"><div><b style="font-size:17px">Guruh ' + esc(g.group) + '</b><small>' + fmtIso(g.start) + ' dan boshlangan · imtihon ' + fmtIso(g.exam) + '</small></div>' +
       '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span class="pill">' + g.studying + ' o\'qishda</span>' + (g.expelled ? '<span class="pill bad">' + g.expelled + ' chetlatildi</span>' : '') + '</div></div>' +
+      '<button type="button" class="btn ghost" style="padding:8px 12px;font-size:14px;align-self:flex-start" data-addto="' + esc(g.group) + '">+ Nomzod qo\'shish</button>' +
       '<span class="lbl">Davomat kuni</span><div class="days">' + [1,2,3,4,5].map(function(d){ var done = g.daysDone.indexOf(d) > -1;
         return '<button type="button" class="' + (done ? 'done' : '') + '" data-day="' + d + '" data-group="' + esc(g.group) + '">' + (done ? '✓ ' : '') + d + '-kun</button>'; }).join('') + '</div></div>';
   }).join('');
@@ -626,14 +628,15 @@ function toastErr(e){ state.flash = { cls:'bad', text: (e && e.message === 'Fail
 function flashHtml(){ if (!state.flash) return ''; var f = state.flash; return '<div class="alert ' + f.cls + '">' + f.text + '</div>'; }
 
 function tomorrowIso(){ var d = new Date(); d.setDate(d.getDate() + 1); return d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
-function openGroupNew(){
-state.flash = null;   state.gnew = { start: tomorrowIso(), items: null, picked: {}, saving: false, error: '' }; state.screen = 'gnew'; render(); scrollTop();
-  api('groupCandidates').then(function(j){ state.gnew.items = j.items || []; state.gnew.items.forEach(function(c){ state.gnew.picked[c.id] = true; }); render(); })
+function openGroupNew(target){
+state.flash = null;   state.gnew = { target: target || null, start: tomorrowIso(), items: null, picked: {}, saving: false, error: '' }; state.screen = 'gnew'; render(); scrollTop();
+  api('groupCandidates').then(function(j){ state.gnew.items = j.items || []; if (!target) state.gnew.items.forEach(function(c){ state.gnew.picked[c.id] = true; }); render(); })
     .catch(function(e){ state.gnew.items = []; state.gnew.error = e.message; render(); });
 }
 function groupNewHtml(){
-  var g = state.gnew, html = '<header class="top"><div class="top-row"><h1>Yangi guruh</h1></div></header><main>';
-  html += '<div class="field"><label for="g-start" class="req">O\'qish boshlanadigan kun</label><input id="g-start" type="date" value="' + esc(g.start) + '"><div class="hint">Imtihon 6-kuni bo\'ladi.</div></div>';
+  var g = state.gnew, html = '<header class="top"><div class="top-row"><h1>' + (g.target ? 'Guruh ' + esc(g.target) + ' ga qo\'shish' : 'Yangi guruh') + '</h1></div></header><main>';
+  if (g.target) html += '<p class="hint">Tanlangan nomzodlar shu guruhga qo\'shiladi va o\'qish, imtihon sanalari guruhniki bo\'ladi. O\'tib ketgan kunlar davomatda qoldirilgan hisoblanmaydi.</p>';
+  else html += '<div class="field"><label for="g-start" class="req">O\'qish boshlanadigan kun</label><input id="g-start" type="date" value="' + esc(g.start) + '"><div class="hint">Imtihon 6-kuni bo\'ladi.</div></div>';
   html += '<div class="field"><span class="lbl">O\'qishga taklif qilingan nomzodlar</span>';
   if (!g.items) html += '<div class="spinner"></div>';
   else if (!g.items.length) html += '<p class="hint">Guruhga qo\'shiladigan nomzod yo\'q. Avval suhbatda nomzodni "O\'qishga taklif qilindi" deb belgilang.</p>';
@@ -641,11 +644,14 @@ function groupNewHtml(){
   html += '</div>';
   if (g.error) html += '<div class="alert bad">' + esc(g.error) + '</div>';
   var n = Object.keys(g.picked).filter(function(k){ return g.picked[k]; }).length;
-  return html + '</main><footer class="actions"><button class="btn ghost" id="g-cancel">Bekor qilish</button><button class="btn" id="g-create"' + (!n || g.saving ? ' disabled' : '') + '>' + (g.saving ? 'Saqlanmoqda…' : 'Guruh tuzish (' + n + ')') + '</button></footer>';
+  return html + '</main><footer class="actions"><button class="btn ghost" id="g-cancel">Bekor qilish</button><button class="btn" id="g-create"' + (!n || g.saving ? ' disabled' : '') + '>' + (g.saving ? 'Saqlanmoqda…' : (g.target ? 'Qo\'shish (' : 'Guruh tuzish (') + n + ')') + '</button></footer>';
 }
 function createGroup(){
   var g = state.gnew, ids = Object.keys(g.picked).filter(function(k){ return g.picked[k]; });
   g.saving = true; g.error = ''; render();
+  if (g.target) return api('addToGroup', { group: g.target, ids: ids }).then(function(j){
+    state.flash = { cls:'ok', text: 'Guruh <b>' + esc(j.group) + '</b> ga ' + j.count + ' nomzod qo\'shildi.' }; goGroups();
+  }).catch(function(e){ g.saving = false; g.error = e.message; render(); });
   api('createGroup', { start: g.start, ids: ids }).then(function(j){
     state.flash = { cls:'ok', text: 'Guruh <b>' + esc(j.group) + '</b> tuzildi: ' + j.count + ' nomzod. Imtihon ' + fmtIso(j.exam) + ' kuni.' }; goGroups();
   }).catch(function(e){ g.saving = false; g.error = e.message; render(); });
@@ -703,6 +709,7 @@ document.addEventListener('click', function(e){
   if (t.id === 'tab-anketa') { state.flash = null; state.tab = 'anketa'; render(); loadRecent(); return; }
   if (t.id === 'tab-guruh') { goGroups(); return; }
   if (t.id === 'g-new') return openGroupNew();
+  if (t.dataset.addto) return openGroupNew(t.dataset.addto);
   if (t.id === 'g-cancel' || t.id === 'd-back') return goGroups();
   if (t.id === 'g-create') return createGroup();
   if (t.id === 'd-save') return saveDay();
@@ -722,7 +729,7 @@ document.addEventListener('input', function(e){
 document.addEventListener('change', function(e){
   var t = e.target;
   if (t.id === 'g-start' && state.gnew) state.gnew.start = t.value;
-  if (t.dataset && t.dataset.pick && state.gnew) { state.gnew.picked[t.dataset.pick] = t.checked; var b = document.getElementById('g-create'); var n = Object.keys(state.gnew.picked).filter(function(k){ return state.gnew.picked[k]; }).length; if (b) { b.disabled = !n; b.textContent = 'Guruh tuzish (' + n + ')'; } }
+  if (t.dataset && t.dataset.pick && state.gnew) { state.gnew.picked[t.dataset.pick] = t.checked; var b = document.getElementById('g-create'); var n = Object.keys(state.gnew.picked).filter(function(k){ return state.gnew.picked[k]; }).length; if (b) { b.disabled = !n; b.textContent = (state.gnew.target ? 'Qo\'shish (' : 'Guruh tuzish (') + n + ')'; } }
 });
 
 
