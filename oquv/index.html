@@ -124,6 +124,31 @@ video,audio,.viewer img.full{width:100%;display:block;border-radius:14px;backgro
 .fade{animation:fd .28s ease both}
 @keyframes fd{from{opacity:.0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.fade,.spin{animation:none}}
+/* HR paneli */
+.mini{display:flex;gap:4px;flex-shrink:0}
+.mini button{appearance:none;width:32px;height:32px;border-radius:10px;border:1px solid var(--edge);background:var(--glass-hi);color:var(--ink);font:inherit;font-size:14px;cursor:pointer}
+.mini button:disabled{opacity:.3;cursor:default}
+.off{opacity:.5}
+.mat.sel{border-color:rgba(212,176,111,.7);background:rgba(212,176,111,.14)}
+.drop{display:flex;flex-direction:column;align-items:center;gap:2px;border:1.5px dashed rgba(212,176,111,.75);border-radius:16px;padding:16px;text-align:center;color:var(--gold-hi);font-weight:700;background:rgba(212,176,111,.08);cursor:pointer}
+.drop small{font-weight:400;color:var(--mute);font-size:12px}
+.dim{position:fixed;inset:0;background:rgba(5,10,22,.55);z-index:40}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:41;max-width:560px;margin:0 auto;border-radius:24px 24px 0 0;padding:16px 16px calc(18px + var(--safe-b));display:flex;flex-direction:column;gap:10px;max-height:88vh;overflow-y:auto;background:rgba(18,30,58,.9)}
+.lite .sheet{background:rgb(22,36,68)}
+.sh-t{font-family:var(--display);font-weight:600;font-size:16px}
+.inp{width:100%;font:inherit;color:var(--ink);background:rgba(255,255,255,.08);border:1px solid var(--edge);border-radius:12px;padding:11px}
+.inp:focus{outline:2px solid var(--gold);outline-offset:1px}
+.err{color:#ffc4be;background:rgba(255,138,128,.14);border:1px solid rgba(255,138,128,.5);border-radius:12px;padding:9px 11px;font-size:13.5px}
+.st-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.st-grid .glass{padding:10px 6px}.st-grid .big{display:block;font-family:var(--display);font-size:22px}.st-grid small{color:var(--mute);font-size:11.5px}
+.st.bad{background:rgba(255,138,128,.18);border:1px solid rgba(255,138,128,.5);color:#ffc4be}
+.bar{height:6px;border-radius:3px;background:rgba(255,255,255,.15);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--teal))}
+.qa{display:flex;flex-direction:column;gap:8px}
+.qa .qh{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.qa .qh small{color:var(--faint);font-size:11.5px;white-space:nowrap}
+.qa .ans{border-left:2px solid var(--gold);padding-left:9px;color:var(--mute)}
+.off2{opacity:.75}
+.qa textarea{min-height:64px}
+.badge{position:absolute;top:2px;right:calc(50% - 22px);min-width:16px;height:16px;border-radius:999px;background:#ff6f61;color:#fff;font-size:10px;line-height:16px;padding:0 4px}
 </style>
 </head>
 <body>
@@ -135,7 +160,8 @@ video,audio,.viewer img.full{width:100%;display:block;border-radius:14px;backgro
 <script>
 var API_URL = 'https://script.google.com/macros/s/AKfycbx-yrGtRqw4LaTrssUCaMdCKevyOScvHo3Oid5BO8mibSZMFc_Y9-MtlWgE3YW-7hQeIA/exec';
 var TG = window.Telegram && Telegram.WebApp;
-var DEMO = /[?&]demo=1/.test(location.search) || !(TG && TG.initData);
+var DEMO_HR = /[?&]demo=hr/.test(location.search);
+var DEMO = DEMO_HR || /[?&]demo=1/.test(location.search) || !(TG && TG.initData);
 var PDFJS = 'lib/'; // pdf.js 3.11.174 (Apache-2.0)
 var MAMMOTH = 'lib/mammoth.browser.min.js'; // mammoth 1.6.0 (BSD-2)
 
@@ -181,7 +207,8 @@ var demoDb = {
 };
 function demoApi(action, d){
   return new Promise(function(res, rej){ setTimeout(function(){
-    if (action === 'oq.me') return res({ ok:true, linked:true, me: demoDb.me, days: demoDb.days });
+    if (action === 'oq.me') return res(DEMO_HR ? { ok:true, linked:false, hr:true } : { ok:true, linked:true, me: demoDb.me, days: demoDb.days });
+    if (action.indexOf('oq.hr.') === 0) return demoHr(action, d).then(res, rej);
     if (action === 'oq.read') { demoDb.days[d.day-1].read = true; return res({ ok:true }); }
     if (action === 'oq.ask') return res({ ok:true });
     if (action === 'oq.chat') return res({ ok:true });
@@ -307,6 +334,7 @@ function tabsHtml(){
 }
 function render(){
   if (state.viewer) return;
+  if (state.mode === 'hr') return hrRender();
   var h = state.tab === 'days' ? daysHtml() : state.tab === 'path' ? pathHtml() : state.tab === 'ask' ? askHtml() : homeHtml();
   app.innerHTML = h; tabsEl.innerHTML = tabsHtml(); tabsEl.hidden = false;
   try { TG && TG.BackButton && TG.BackButton.hide(); } catch (e) {}
@@ -317,15 +345,16 @@ function message(title, text, btn){
 }
 
 /* ---------- Material ko'ruvchi ---------- */
-function openViewer(day, t){
-  var dd = state.data.days[day - 1], m = dd.mats.filter(function(x){ return x.t === t; })[0];
+function openViewer(day, t, meta){
+  var m = meta || state.data.days[day - 1].mats.filter(function(x){ return x.t === t; })[0];
+  var action = state.mode === 'hr' ? 'oq.hr.preview' : 'oq.file';
   state.viewer = { day: day, t: t };
   tabsEl.hidden = true;
   try { TG && TG.BackButton && TG.BackButton.show(); } catch (e) {}
   app.innerHTML = '<div class="glass vbar"><button type="button" id="v-back" aria-label="Orqaga">‹</button><div class="t"><b>' + esc(m.nomi) + '</b><small>' + day + '-kun · ' + esc(m.turi) + '</small></div></div>' +
     '<div id="vbody"><div class="loading"><div class="spin"></div>Yuklanmoqda…<small>Video va katta fayllar biroz vaqt olishi mumkin</small></div></div>';
   window.scrollTo(0, 0);
-  api('oq.file', { day: day, t: t }).then(function(j){
+  api(action, { day: day, t: t }).then(function(j){
     if (!state.viewer || state.viewer.day !== day || state.viewer.t !== t) return;
     m.seen = true;
     showFile(j, day, t);
@@ -340,11 +369,11 @@ function closeViewer(){
 }
 function b64ToBytes(b64){ var bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return u; }
 function wmHtml(){
-  var name = state.data.me.name + ' · Doctor Ali', out = '';
+  var name = (state.mode === 'hr' ? "HR ko'rib chiqish" : state.data.me.name) + ' · Doctor Ali', out = '';
   for (var y = 0; y < 30; y++) for (var x = 0; x < 3; x++) out += '<span style="top:' + (y * 150 + (x % 2) * 70) + 'px;left:' + (x * 38 - 10) + '%">' + esc(name) + '</span>';
   return '<div class="wm" aria-hidden="true">' + out + '</div>';
 }
-function chatBtn(day, t){ return '<button class="btn ghost" type="button" data-chat="' + day + ':' + t + '" style="margin-top:12px">Telegram chatida ochish</button>'; }
+function chatBtn(day, t){ if (state.mode === 'hr') return ''; return '<button class="btn ghost" type="button" data-chat="' + day + ':' + t + '" style="margin-top:12px">Telegram chatida ochish</button>'; }
 function loadScript(src){ return new Promise(function(res, rej){ var s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = function(){ rej(new Error("Ko'ruvchini yuklab bo'lmadi. Internetni tekshiring")); }; document.head.appendChild(s); }); }
 function showFile(j, day, t){
   var body = document.getElementById('vbody');
@@ -434,12 +463,309 @@ document.addEventListener('click', function(e){
 });
 document.addEventListener('input', function(e){ if (e.target.id === 'q') state.draft = e.target.value; });
 
+/* ================= HR paneli ================= */
+var IC_HR = {
+  mats: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg>',
+  report: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  qs: IC.ask
+};
+var MAX_UP = 20 * 1024 * 1024;
+
+function hrStart(){
+  state.mode = 'hr'; state.tab = state.tab && /^hr-/.test(state.tab) ? state.tab : 'hr-mats';
+  state.hrDay = state.hrDay || 1;
+  api('oq.hr.home').then(function(j){
+    state.hr = j; state.hrGroup = state.hrGroup || (j.groups[0] && j.groups[0].name) || null;
+    var g = hrGroupObj(); state.sendDay = g && g.today >= 1 && g.today <= 5 ? g.today : 1;
+    return api('oq.hr.mats');
+  }).then(function(j){ state.hrMats = j.days; render(); })
+    .catch(function(e){ message('Ochilmadi', esc(errText(e)), '<button class="btn" type="button" id="reload" style="max-width:260px">Qayta urinish</button>'); });
+}
+function hrGroupObj(){ var gs = (state.hr && state.hr.groups) || []; return gs.filter(function(g){ return g.name === state.hrGroup; })[0] || null; }
+function hrTop(){
+  return '<div class="top"><img src="logo.png" alt=""><div><b>Darslarim</b><small>HR paneli' + (state.hr && state.hr.name ? ' · ' + esc(state.hr.name) : '') + '</small></div>' +
+    '<a class="pill" style="margin-left:auto;text-decoration:none" href="?demo=1">Nomzod namunasi</a></div>' +
+    (DEMO ? '<div class="demo">Namuna rejim: ma\'lumotlar haqiqiy emas</div>' : '');
+}
+function hrTabs(){
+  var un = state.hr && state.hr.unanswered;
+  return '<div class="glass">' + [['hr-mats','Materiallar','mats'],['hr-send','Yuborish','send'],['hr-report','Hisobot','report'],['hr-qs','Savollar','qs']].map(function(t){
+    return '<button type="button" class="tab' + (state.tab === t[0] ? ' on' : '') + '" data-tab="' + t[0] + '" style="position:relative">' + IC_HR[t[2]] + t[1] +
+      (t[0] === 'hr-qs' && un ? '<span class="badge">' + un + '</span>' : '') + '</button>';
+  }).join('') + '</div>';
+}
+function hrRender(){
+  var h = state.tab === 'hr-send' ? hrSendHtml() : state.tab === 'hr-report' ? hrReportHtml() : state.tab === 'hr-qs' ? hrQsHtml() : hrMatsHtml();
+  app.innerHTML = h + (state.sheet ? sheetHtml() : '');
+  tabsEl.innerHTML = hrTabs(); tabsEl.hidden = !!state.sheet;
+  try { TG && TG.BackButton && (state.sheet ? TG.BackButton.show() : TG.BackButton.hide()); } catch (e) {}
+}
+function groupChips(){
+  var gs = state.hr.groups;
+  if (!gs.length) return '<div class="glass empty">O\'qishdagi guruh yo\'q. Guruhni HR ilovasida (Nomzod Yo\'li) yarating.</div>';
+  return '<div class="list">' + gs.map(function(g){
+    var on = g.name === state.hrGroup;
+    return '<button type="button" class="glass mat' + (on ? ' sel' : '') + '" data-group="' + esc(g.name) + '"><span class="t"><b>Guruh ' + esc(g.name) + ' · ' + dm(g.start) + ' dan</b>' +
+      '<small>' + (g.today >= 1 && g.today <= 5 ? 'Bugun ' + g.today + '-kun' : (g.today < 1 ? 'Hali boshlanmagan' : 'O\'qish tugagan')) + ' · ' + g.count + ' nomzod · ' + g.linked + ' botga ulangan</small></span>' +
+      (on ? '<span class="st ok">tanlandi</span>' : '') + '</button>';
+  }).join('') + '</div>';
+}
+
+/* --- Materiallar --- */
+function hrMatsHtml(){
+  var days = state.hrMats || [], sel = state.hrDay, cur = days[sel - 1] || { mats: [] };
+  var h = hrTop() + '<div class="days">' + days.map(function(x){
+    var n = x.mats.filter(function(m){ return m.faol; }).length;
+    return '<button type="button" class="' + (x.day === sel ? 'on' : (n ? 'done' : '')) + '" data-hday="' + x.day + '"><b>' + x.day + '</b><small>' + n + ' ta</small></button>';
+  }).join('') + '</div>';
+  h += '<div class="lbl">' + sel + '-kun · ' + cur.mats.length + ' material</div>';
+  h += cur.mats.length ? '<div class="list">' + cur.mats.map(function(m, i){
+    return '<div class="glass mat' + (m.faol ? '' : ' off') + '">' + icoFor(m.turi) + '<span class="t"><b>' + esc(m.nomi) + '</b><small>' + esc(m.turi) + ' · ' + (m.faol ? 'ko\'rinadi' : 'yashirilgan') + '</small></span>' +
+      '<span class="mini"><button type="button" data-mv="' + m.row + ':' + m.t + ':-1" aria-label="Yuqoriga"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+      '<button type="button" data-mv="' + m.row + ':' + m.t + ':1" aria-label="Pastga"' + (i === cur.mats.length - 1 ? ' disabled' : '') + '>↓</button>' +
+      '<button type="button" data-medit="' + m.row + '" aria-label="Sozlash">⋯</button></span></div>';
+  }).join('') + '</div>' : '<div class="glass empty">Bu kunga hali material qo\'shilmagan.</div>';
+  h += '<label class="drop" for="upfile">＋ Fayl yuklash<small>PDF, Word, video yoki rasm · 20 MB gacha</small></label>' +
+    '<input type="file" id="upfile" accept=".pdf,.doc,.docx,video/*,image/*" hidden>';
+  h += '<p class="hint" style="margin:0 4px">20 MB dan katta videoni o\'quv botiga to\'g\'ridan yuboring, u ham shu ro\'yxatga tushadi.</p>';
+  return h;
+}
+function findMat(row){ var out = null; (state.hrMats || []).forEach(function(d){ d.mats.forEach(function(m){ if (m.row === row) out = { m: m, day: d.day }; }); }); return out; }
+function sheetHtml(){
+  var sh = state.sheet, h = '<div class="dim" data-close="1"></div><div class="sheet glass" role="dialog" aria-modal="true">';
+  if (sh.kind === 'edit' || sh.kind === 'upload') {
+    var isUp = sh.kind === 'upload';
+    h += '<b class="sh-t">' + (isUp ? 'Yangi material' : 'Materialni sozlash') + '</b>';
+    if (isUp) h += '<div class="hint">' + esc(sh.file.name) + ' · ' + (sh.file.size / 1048576).toFixed(1) + ' MB</div>';
+    h += '<label class="hint" for="sh-name">Nomi</label><input id="sh-name" class="inp" maxlength="120" value="' + esc(sh.nomi) + '">';
+    h += '<span class="hint">Kun</span><div class="days">' + [1,2,3,4,5].map(function(d){ return '<button type="button" class="' + (d === sh.kun ? 'on' : '') + '" data-shday="' + d + '"><b>' + d + '</b><small>kun</small></button>'; }).join('') + '</div>';
+    if (!isUp) {
+      h += '<button type="button" class="btn ghost" data-toggle="1">' + (sh.faol ? '🙈 Nomzodlardan yashirish' : '👁 Yana ko\'rsatish') + '</button>';
+      h += '<button type="button" class="btn ghost" data-preview="1">Nomzod ko\'rinishida ochish</button>';
+    }
+    if (sh.error) h += '<div class="err">' + esc(sh.error) + '</div>';
+    h += '<button type="button" class="btn" id="sh-save"' + (sh.busy ? ' disabled' : '') + '>' + (sh.busy ? (isUp ? 'Yuklanmoqda…' : 'Saqlanmoqda…') : (isUp ? 'Yuklash' : 'Saqlash')) + '</button>';
+  } else if (sh.kind === 'send') {
+    var inf = sh.info;
+    h += '<b class="sh-t">Guruh ' + esc(sh.group) + ' · ' + sh.day + '-kun</b>';
+    if (!inf) h += '<div class="loading"><div class="spin"></div></div>';
+    else if (sh.result) {
+      var r = sh.result;
+      h += '<div class="st-grid"><div class="glass"><b class="big">' + r.good.length + '</b><small>yuborildi</small></div><div class="glass"><b class="big">' + r.notLinked.length + '</b><small>ulanmagan</small></div><div class="glass"><b class="big">' + r.failed.length + '</b><small>yetmadi</small></div></div>';
+      if (r.notLinked.length) h += '<div class="hint">Ulanmaganlar botga kirishi bilan o\'zi oladi: ' + esc(r.notLinked.join(', ')) + '</div>';
+      if (r.failed.length) h += '<div class="hint">Yetmadi (botni o\'chirgan bo\'lishi mumkin): ' + esc(r.failed.join(', ')) + '</div>';
+      if (r.bad.length) h += '<div class="err">Bu materiallar ketmadi, faylni qayta yuklang: ' + esc(r.bad.join('; ')) + '</div>';
+      h += '<button type="button" class="btn" data-close="1">Yopish</button>';
+    } else if (!inf.mats.length) {
+      h += '<div class="err">' + sh.day + '-kun uchun material yo\'q. Avval «Materiallar» bo\'limida fayl qo\'shing.</div><button type="button" class="btn ghost" data-close="1">Yopish</button>';
+    } else {
+      h += '<div class="hint">' + inf.mats.length + ' material: ' + esc(inf.mats.map(function(m){ return m.nomi; }).join(', ')) + '</div>';
+      h += '<div class="st-grid"><div class="glass"><b class="big">' + inf.linked + '</b><small>oladi</small></div><div class="glass"><b class="big">' + inf.notLinked.length + '</b><small>ulanmagan</small></div><div class="glass"><b class="big">' + (inf.total - inf.todo) + '</b><small>oldin olgan</small></div></div>';
+      if (inf.notLinked.length) h += '<div class="hint">Ulanmaganlar: ' + esc(inf.notLinked.join(', ')) + '. Botga kirishi bilan o\'zi oladi.</div>';
+      if (sh.error) h += '<div class="err">' + esc(sh.error) + '</div>';
+      if (inf.todo) h += '<button type="button" class="btn" id="do-send"' + (sh.busy ? ' disabled' : '') + '>' + (sh.busy ? 'Yuborilmoqda…' : '➤ ' + inf.linked + ' nomzodga yuborish') + '</button>';
+      else h += '<div class="hint">Bu kun hamma nomzodga yuborilgan. Yangi material qo\'shgan bo\'lsangiz, qayta yuborishingiz mumkin.</div><button type="button" class="btn" id="do-send-all"' + (sh.busy ? ' disabled' : '') + '>' + (sh.busy ? 'Yuborilmoqda…' : '🔁 Hammaga qayta yuborish') + '</button>';
+    }
+  }
+  return h + '</div>';
+}
+function hrMatsAfter(j, msg){ state.hrMats = j.days; state.sheet = null; if (msg) { haptic('ok'); toast(msg, 'ok'); } render(); }
+function readB64(file){
+  return new Promise(function(res, rej){ var r = new FileReader(); r.onload = function(){ res(String(r.result).split(',')[1] || ''); }; r.onerror = function(){ rej(new Error("Faylni o'qib bo'lmadi")); }; r.readAsDataURL(file); });
+}
+
+/* --- Yuborish --- */
+function hrSendHtml(){
+  var g = hrGroupObj(), h = hrTop() + '<div class="lbl">Guruh</div>' + groupChips();
+  if (!g) return h;
+  h += '<div class="lbl">Kun</div><div class="days">' + [1,2,3,4,5].map(function(d){
+    var done = g.opened.indexOf(d) > -1;
+    return '<button type="button" class="' + (d === state.sendDay ? 'on' : (done ? 'done' : '')) + '" data-sday="' + d + '"><b>' + d + '</b><small>' + (done ? '✓ ketgan' : (d === g.today ? 'bugun' : dm(isoAdd(g.start, d - 1)))) + '</small></button>';
+  }).join('') + '</div>';
+  var n = (state.hrMats && state.hrMats[state.sendDay - 1]) ? state.hrMats[state.sendDay - 1].mats.filter(function(m){ return m.faol; }).length : 0;
+  h += '<div class="glass" style="display:flex;flex-direction:column;gap:10px"><b>' + state.sendDay + '-kun · ' + n + ' material</b>' +
+    '<div class="hint">' + (n ? esc(state.hrMats[state.sendDay - 1].mats.filter(function(m){ return m.faol; }).map(function(m){ return m.nomi; }).join(', ')) : 'Bu kunga material qo\'shilmagan.') + '</div>' +
+    '<button type="button" class="btn" id="send-open"' + (n ? '' : ' disabled') + '>Davom etish</button></div>';
+  return h;
+}
+function isoAdd(iso, n){ var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); if (!m) return ''; var d = new Date(+m[1], +m[2]-1, +m[3] + n); return d.getFullYear() + '-' + ('0'+(d.getMonth()+1)).slice(-2) + '-' + ('0'+d.getDate()).slice(-2); }
+
+/* --- Hisobot --- */
+function hrReportHtml(){
+  var g = hrGroupObj(), h = hrTop() + '<div class="lbl">Guruh</div>' + groupChips();
+  if (!g) return h;
+  var rep = state.report && state.report.group === g.name ? state.report : null;
+  if (!rep) { loadReport(); return h + '<div class="loading"><div class="spin"></div></div>'; }
+  if (!rep.opened.length) return h + '<div class="glass empty">Bu guruhga hali material yuborilmagan.</div>';
+  var day = rep.opened.indexOf(state.repDay) > -1 ? state.repDay : rep.opened[rep.opened.length - 1]; state.repDay = day;
+  h += '<div class="days">' + [1,2,3,4,5].map(function(d){
+    var open = rep.opened.indexOf(d) > -1, rd = rep.people.filter(function(p){ return p.days[d] && p.days[d].read; }).length;
+    return '<button type="button" class="' + (d === day ? 'on' : '') + '" data-rday="' + d + '"' + (open ? '' : ' disabled') + '><b>' + d + '</b><small>' + (open ? rd + '/' + rep.people.length : '—') + '</small></button>';
+  }).join('') + '</div>';
+  var N = rep.matN[day] || 0, read = 0, unread = 0;
+  var rows = rep.people.map(function(p){
+    var x = p.days[day] || {}, pill, sub;
+    if (!p.linked) { pill = '<span class="st bad">ulanmagan</span>'; sub = 'botga ulanmagan'; unread++; }
+    else if (x.st === 'Yetkazilmadi') { pill = '<span class="st bad">yetmadi</span>'; sub = 'xabar yetmadi'; unread++; }
+    else if (x.read) { pill = '<span class="st ok">o\'qidi</span>'; sub = x.seen + '/' + N + ' ochdi'; read++; }
+    else if (x.seen) { pill = '<span class="st new">o\'qiyapti</span>'; sub = x.seen + '/' + N + ' ochdi'; unread++; }
+    else { pill = '<span class="st bad">ochmagan</span>'; sub = '0/' + N + ' ochdi'; unread++; }
+    return { order: x.read ? 2 : (p.linked ? 0 : 1), html: '<div class="glass mat"><span class="t"><b>' + esc(p.name) + '</b><small>' + sub + '</small></span>' + pill + '</div>' };
+  }).sort(function(a, b){ return a.order - b.order; });
+  var pct = rep.people.length ? Math.round(read / rep.people.length * 100) : 0;
+  h += '<div class="glass"><div style="display:flex;justify-content:space-between"><b>' + day + '-kun · Guruh ' + esc(g.name) + '</b><span>' + read + ' / ' + rep.people.length + ' o\'qidi</span></div><div class="bar"><i style="width:' + pct + '%"></i></div></div>';
+  h += '<div class="list">' + rows.map(function(r){ return r.html; }).join('') + '</div>';
+  var canRemind = rep.people.filter(function(p){ var x = p.days[day] || {}; return p.linked && !x.read; }).length;
+  if (canRemind) h += '<button type="button" class="btn ghost" id="remind"' + (state.sending ? ' disabled' : '') + '>🔔 O\'qimagan ' + canRemind + ' nomzodga eslatish</button>';
+  return h;
+}
+function loadReport(){
+  if (state.repLoading) return; state.repLoading = true;
+  api('oq.hr.report', { group: state.hrGroup }).then(function(j){ state.report = j; })
+    .catch(function(e){ toast(errText(e), 'bad'); state.report = { group: state.hrGroup, opened: [], people: [], matN: {} }; })
+    .then(function(){ state.repLoading = false; if (state.tab === 'hr-report') render(); });
+}
+
+/* --- Savollar --- */
+function hrQsHtml(){
+  var h = hrTop();
+  if (!state.qs) { api('oq.hr.questions').then(function(j){ state.qs = j.items; render(); }).catch(function(e){ state.qs = []; toast(errText(e), 'bad'); render(); }); return h + '<div class="loading"><div class="spin"></div></div>'; }
+  var open = state.qs.filter(function(q){ return !q.javob; }), done = state.qs.filter(function(q){ return q.javob; });
+  if (!state.qs.length) return h + '<div class="glass empty">Hozircha savol yo\'q. Nomzodlar ilovadagi «Savol» bo\'limi yoki bot orqali yozadi.</div>';
+  function card(q, withForm){
+    return '<div class="glass qa' + (withForm ? '' : ' off2') + '"><div class="qh"><b>' + esc(q.name) + '</b><small>' + esc(q.group) + ' · ' + esc(q.date) + '</small></div><div>' + esc(q.savol) + '</div>' +
+      (withForm ? '<label class="hint" for="ans' + q.row + '" style="position:absolute;left:-9999px">Javob</label><textarea id="ans' + q.row + '" class="inp" rows="2" placeholder="Javobingiz…">' + esc((state.ansDraft || {})[q.row] || '') + '</textarea>' +
+        '<button type="button" class="btn" data-answer="' + q.row + '"' + (state.sending ? ' disabled' : '') + '>Javob yuborish</button>' : '<div class="ans">' + esc(q.javob) + '</div>') + '</div>';
+  }
+  h += '<div class="lbl">Javobsiz · ' + open.length + '</div>' + (open.length ? '<div class="list">' + open.map(function(q){ return card(q, true); }).join('') + '</div>' : '<div class="glass empty">Hamma savolga javob berilgan 👍</div>');
+  if (done.length) h += '<div class="lbl">Javob berilgan</div><div class="list">' + done.slice(0, 20).map(function(q){ return card(q, false); }).join('') + '</div>';
+  return h;
+}
+
+/* --- HR hodisalari --- */
+document.addEventListener('click', function(e){
+  if (state.mode !== 'hr') return;
+  var c = e.target.closest('[data-close]'); if (c && !(state.sheet && state.sheet.busy)) { state.sheet = null; render(); return; }
+  var b = e.target.closest('button'); if (!b || b.disabled) return;
+  if (b.dataset.hday) { state.hrDay = +b.dataset.hday; render(); return; }
+  if (b.dataset.group) { state.hrGroup = b.dataset.group; var g = hrGroupObj(); state.sendDay = g && g.today >= 1 && g.today <= 5 ? g.today : 1; render(); return; }
+  if (b.dataset.sday) { state.sendDay = +b.dataset.sday; render(); return; }
+  if (b.dataset.rday) { state.repDay = +b.dataset.rday; render(); return; }
+  if (b.dataset.mv) {
+    var mv = b.dataset.mv.split(':'); b.disabled = true;
+    api('oq.hr.matMove', { row: +mv[0], t: +mv[1], dir: +mv[2] }).then(function(j){ hrMatsAfter(j); }).catch(function(x){ toast(errText(x), 'bad'); render(); });
+    return;
+  }
+  if (b.dataset.medit) { var f = findMat(+b.dataset.medit); if (!f) return; state.sheet = { kind: 'edit', row: f.m.row, t: f.m.t, nomi: f.m.nomi, kun: f.day, faol: f.m.faol, turi: f.m.turi, day0: f.day }; render(); return; }
+  if (b.dataset.shday) { state.sheet.nomi = document.getElementById('sh-name').value; state.sheet.kun = +b.dataset.shday; render(); return; }
+  if (b.dataset.toggle) {
+    var s0 = state.sheet; s0.busy = true; render();
+    api('oq.hr.matSave', { row: s0.row, t: s0.t, faol: !s0.faol }).then(function(j){ hrMatsAfter(j, s0.faol ? 'Yashirildi' : "Yana ko'rinadi"); })
+      .catch(function(x){ s0.busy = false; s0.error = errText(x); render(); });
+    return;
+  }
+  if (b.dataset.preview) { var s1 = state.sheet; state.sheet = null; openViewer(s1.day0, s1.t, { nomi: s1.nomi, turi: s1.turi }); return; }
+  if (b.id === 'sh-save') {
+    var sh = state.sheet; sh.nomi = document.getElementById('sh-name').value.trim();
+    if (!sh.nomi) { sh.error = 'Nomini yozing'; render(); return; }
+    sh.busy = true; sh.error = ''; render();
+    if (sh.kind === 'upload') {
+      readB64(sh.file).then(function(b64){ return api('oq.hr.upload', { kun: sh.kun, nomi: sh.nomi, name: sh.file.name, mime: sh.file.type, data: b64 }); })
+        .then(function(j){ state.hrDay = sh.kun; hrMatsAfter(j, sh.kun + "-kunga qo'shildi"); })
+        .catch(function(x){ sh.busy = false; sh.error = errText(x); render(); });
+    } else {
+      var data = { row: sh.row, t: sh.t, nomi: sh.nomi }; if (sh.kun !== sh.day0) data.kun = sh.kun;
+      api('oq.hr.matSave', data).then(function(j){ hrMatsAfter(j, 'Saqlandi'); }).catch(function(x){ sh.busy = false; sh.error = errText(x); render(); });
+    }
+    return;
+  }
+  if (b.id === 'send-open') {
+    var ss = state.sheet = { kind: 'send', group: state.hrGroup, day: state.sendDay, info: null }; render();
+    api('oq.hr.sendInfo', { group: ss.group, day: ss.day }).then(function(j){ ss.info = j; render(); }).catch(function(x){ state.sheet = null; toast(errText(x), 'bad'); render(); });
+    return;
+  }
+  if (b.id === 'do-send' || b.id === 'do-send-all') {
+    var sd = state.sheet; sd.busy = true; sd.error = ''; render();
+    api('oq.hr.send', { group: sd.group, day: sd.day, all: b.id === 'do-send-all' }).then(function(j){
+      sd.busy = false; sd.result = j.result; haptic('ok'); state.report = null;
+      var g = hrGroupObj(); if (g && g.opened.indexOf(sd.day) === -1) g.opened.push(sd.day);
+      render();
+    }).catch(function(x){ sd.busy = false; sd.error = errText(x); render(); });
+    return;
+  }
+  if (b.id === 'remind') {
+    state.sending = true; render();
+    api('oq.hr.remind', { group: state.hrGroup, day: state.repDay }).then(function(j){ haptic('ok'); toast('Eslatma yuborildi: ' + j.count + ' nomzod', 'ok'); })
+      .catch(function(x){ toast(errText(x), 'bad'); }).then(function(){ state.sending = false; render(); });
+    return;
+  }
+  if (b.dataset.answer) {
+    var row = +b.dataset.answer, ta = document.getElementById('ans' + row), text = (ta && ta.value || '').trim();
+    if (!text) { toast('Javobni yozing', 'bad'); return; }
+    state.sending = true; render();
+    api('oq.hr.answer', { row: row, text: text }).then(function(j){
+      state.qs = j.items; if (state.ansDraft) delete state.ansDraft[row];
+      state.hr.unanswered = j.items.filter(function(q){ return !q.javob; }).length; haptic('ok'); toast('Javob yuborildi', 'ok');
+    }).catch(function(x){ toast(errText(x), 'bad'); }).then(function(){ state.sending = false; render(); });
+    return;
+  }
+}, true);
+document.addEventListener('input', function(e){
+  if (state.mode !== 'hr') return;
+  var m = /^ans(\d+)$/.exec(e.target.id || ''); if (m) { state.ansDraft = state.ansDraft || {}; state.ansDraft[m[1]] = e.target.value; }
+  if (e.target.id === 'sh-name' && state.sheet) state.sheet.nomi = e.target.value;
+});
+document.addEventListener('change', function(e){
+  if (state.mode !== 'hr' || e.target.id !== 'upfile') return;
+  var file = e.target.files && e.target.files[0]; if (!file) return;
+  if (file.size > MAX_UP) { toast("Fayl 20 MB dan katta. Uni o'quv botiga to'g'ridan yuboring", 'bad'); return; }
+  state.sheet = { kind: 'upload', file: file, nomi: file.name.replace(/\.[A-Za-z0-9]{1,5}$/, ''), kun: state.hrDay };
+  render();
+});
+
+/* --- HR namuna ma'lumotlari --- */
+var demoHrDb = {
+  home: { ok:true, hrPanel:true, name:'Abduqodir', bot:'DoctorAlidars_bot', unanswered:2, matCounts:[3,3,1,0,0],
+    groups:[ { name:'#1', start:isoPlus(-1), exam:isoPlus(4), count:14, linked:12, today:2, opened:[1] }, { name:'#2', start:isoPlus(1), exam:isoPlus(6), count:9, linked:3, today:0, opened:[] } ] },
+  mats: [
+    { day:1, mats:[ { row:2, t:1, nomi:'Kompaniya bilan tanishuv', turi:'PDF', faol:true }, { row:3, t:2, nomi:'CRM bilan ishlash, 1-qism', turi:'Video', faol:true }, { row:4, t:3, nomi:'Mijoz bilan suhbat skripti', turi:'Word', faol:true } ] },
+    { day:2, mats:[ { row:5, t:1, nomi:'Kassa bilan ishlash', turi:'PDF', faol:true }, { row:6, t:2, nomi:'CRM bilan ishlash, 2-qism', turi:'Video', faol:true }, { row:7, t:3, nomi:"Eski narxlar ro'yxati", turi:'Word', faol:false } ] },
+    { day:3, mats:[ { row:8, t:1, nomi:'Ombor hisobi', turi:'PDF', faol:true } ] }, { day:4, mats:[] }, { day:5, mats:[] } ],
+  qs: [ { row:2, date:'10:42', name:'Ergashev Dilshod', group:'#1', savol:'Kassada qaytarishni qanday rasmiylashtiramiz?', javob:'' },
+        { row:3, date:'09:15', name:'Tursunov Bekzod', group:'#1', savol:'Video ochilmayapti, nima qilay?', javob:'' },
+        { row:1, date:'kecha', name:'Rahimov Sardor', group:'#1', savol:'Ertaga soat nechida?', javob:'9:00 da, 2-xonada.' } ]
+};
+function demoHr(action, d){
+  return new Promise(function(res){ setTimeout(function(){
+    var db = demoHrDb;
+    if (action === 'oq.hr.home') return res(db.home);
+    if (action === 'oq.hr.mats') return res({ ok:true, days: db.mats });
+    if (action === 'oq.hr.matMove') { var f = findMat(d.row), arr = db.mats[f.day-1].mats, i = arr.indexOf(f.m), j = i + d.dir; var t = arr[i]; arr[i] = arr[j]; arr[j] = t; return res({ ok:true, days: db.mats }); }
+    if (action === 'oq.hr.matSave') { var g = findMat(d.row); if (d.nomi) g.m.nomi = d.nomi; if (d.faol !== undefined) g.m.faol = d.faol;
+      if (d.kun) { db.mats[g.day-1].mats.splice(db.mats[g.day-1].mats.indexOf(g.m), 1); db.mats[d.kun-1].mats.push(g.m); } return res({ ok:true, days: db.mats }); }
+    if (action === 'oq.hr.upload') { db.mats[d.kun-1].mats.push({ row: 100 + Math.round(Math.random()*1e4), t: db.mats[d.kun-1].mats.length + 1, nomi: d.nomi, turi: /pdf$/i.test(d.name) ? 'PDF' : 'Fayl', faol:true }); return res({ ok:true, days: db.mats }); }
+    if (action === 'oq.hr.preview') return res(demoApi('oq.file', { day:1, t:1 }));
+    if (action === 'oq.hr.sendInfo') return res({ ok:true, mats: db.mats[d.day-1].mats.filter(function(m){ return m.faol; }), total:14, todo: d.day === 1 ? 0 : 14, linked:12, notLinked:['Karimov Jasur','Nurmatov Otabek'] });
+    if (action === 'oq.hr.send') return res({ ok:true, result:{ good:['a','b','c','d','e','f','g','h','i','j','k','l'], notLinked:['Karimov Jasur','Nurmatov Otabek'], failed:[], bad:[] } });
+    if (action === 'oq.hr.report') return res({ ok:true, group:d.group, opened: d.group === '#1' ? [1,2] : [], matN:{1:3,2:2}, people:[
+      { name:'Rahimov Sardor', linked:true, days:{1:{st:'Yuborildi',read:true,seen:3},2:{st:'Yuborildi',read:true,seen:2}} },
+      { name:'Ergashev Dilshod', linked:true, days:{1:{st:'Yuborildi',read:true,seen:3},2:{st:'Yuborildi',read:false,seen:1}} },
+      { name:'Tursunov Bekzod', linked:true, days:{1:{st:'Yuborildi',read:false,seen:1},2:{st:'Yuborildi',read:false,seen:0}} },
+      { name:'Karimov Jasur', linked:false, days:{1:{st:'Ulanmagan'},2:{st:'Ulanmagan'}} } ] });
+    if (action === 'oq.hr.remind') return res({ ok:true, count:2 });
+    if (action === 'oq.hr.questions') return res({ ok:true, items: db.qs });
+    if (action === 'oq.hr.answer') { db.qs.forEach(function(q){ if (q.row === d.row) q.javob = d.text; }); return res({ ok:true, items: db.qs }); }
+    res({ ok:false, error:'?' });
+  }, 300); });
+}
+
 /* ---------- Ishga tushirish ---------- */
 function start(){
   app.innerHTML = '<div class="splash"><img src="logo.png" alt="Doctor Ali"><div class="spin"></div></div>'; tabsEl.hidden = true;
   api('oq.me').then(function(j){
     if (!j.linked) {
-      if (j.hr) return message('Siz HR sifatida kirdingiz', "Bu ilova nomzodlar uchun. Nomzod nimani ko'rishini namuna orqali ko'ring.", '<a class="btn" style="text-decoration:none;max-width:260px" href="?demo=1">Namunani ochish</a>');
+      if (j.hr) return hrStart();
       return message('Avval botga ulaning', "Botdagi «📱 Telefon raqamni yuborish» tugmasini bosing. Shundan keyin ilova sizni taniydi.", '<button class="btn" type="button" id="to-bot" style="max-width:260px">Botga qaytish</button>');
     }
     if (j.expelled) return message("Kirish yopilgan", "Siz o'qishdan chetlatilgansiz. Savol bo'lsa, HR bilan bog'laning.");
@@ -454,7 +780,7 @@ if (TG) {
     TG.setHeaderColor && TG.setHeaderColor('#0a1326'); TG.setBackgroundColor && TG.setBackgroundColor('#0a1326');
     TG.setBottomBarColor && TG.setBottomBarColor('#0a1326');
     TG.disableVerticalSwipes && TG.disableVerticalSwipes();
-    TG.BackButton.onClick(function(){ if (state.viewer) closeViewer(); });
+    TG.BackButton.onClick(function(){ if (state.viewer) closeViewer(); else if (state.sheet) { state.sheet = null; render(); } });
   } catch (e) {}
 }
 start();
