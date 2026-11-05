@@ -1490,8 +1490,10 @@ function remindCore_(group, day) {
   });
   var res = tgMany_(targets.map(function (m) {
     return { method: 'sendMessage', payload: { chat_id: String(m['Telegram ID']),
-      text: '⏰ Eslatma: ' + day + "-kun materiallarini o'qib chiqing va «✅ O'qidim» tugmasini bosing.\nMateriallar: «" + BTN.MATS + '» tugmasi.',
-      reply_markup: ikb_([[b_("✅ O'qidim", 'r|' + day)]]) } };
+      text: 'Assalomu alaykum va rohmatullohi va barakatuh, ' + firstName_(m["F.I.Sh."]) + '!\n\n' +
+        '⏰ ' + day + "-kun materiallarini hali o'qib chiqmagansiz. Iltimos, ularni ko'rib chiqing va o'qib bo'lgach «✅ O'qidim» tugmasini bosing.\n\n" +
+        "Materiallarni pastdagi «📱 Darslarim» tugmasi orqali bir bosishda ochasiz.",
+      reply_markup: ikb_([[appBtn_()], [b_("✅ O'qidim", 'r|' + day)]]) } };
   }));
   return res.filter(function (r) { return r.ok; }).length;
 }
