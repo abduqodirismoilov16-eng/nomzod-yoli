@@ -1024,6 +1024,12 @@ function members_(group) {
   });
 }
 
+/** «Familiya Ism Sharif» → «Ism Familiya» (murojaat uchun). */
+function nameSurname_(fio) {
+  var p = String(fio || '').trim().split(/\s+/);
+  return p.length > 1 ? p[1] + ' ' + p[0] : p[0];
+}
+
 function firstName_(fio) {
   var p = String(fio || '').trim().split(/\s+/);
   return p.length > 1 ? p[1] : p[0];
@@ -1490,7 +1496,7 @@ function remindCore_(group, day) {
   });
   var res = tgMany_(targets.map(function (m) {
     return { method: 'sendMessage', payload: { chat_id: String(m['Telegram ID']),
-      text: 'Assalomu alaykum va rohmatullohi va barakatuh, ' + firstName_(m["F.I.Sh."]) + '!\n\n' +
+      text: 'Assalomu alaykum va rohmatullohi va barakatuh, ' + nameSurname_(m["F.I.Sh."]) + '!\n\n' +
         '⏰ ' + day + "-kun materiallarini hali o'qib chiqmagansiz. Iltimos, ularni ko'rib chiqing va o'qib bo'lgach «✅ O'qidim» tugmasini bosing.\n\n" +
         "Materiallarni pastdagi «📱 Darslarim» tugmasi orqali bir bosishda ochasiz.",
       reply_markup: ikb_([[appBtn_()], [b_("✅ O'qidim", 'r|' + day)]]) } };
