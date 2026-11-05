@@ -187,8 +187,9 @@ function haptic(k){ try { TG && TG.HapticFeedback && (k === 'ok' ? TG.HapticFeed
 var toastT;
 function toast(text, cls){ var t = document.getElementById('toast'); t.className = 'toast ' + (cls || ''); t.textContent = text; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(function(){ t.hidden = true; }, 3200); }
 
+var PREVIEW = false; // HR nomzod ko'rinishini namuna ma'lumotlarda ko'ryapti (sahifadan chiqmasdan)
 function api(action, data){
-  if (DEMO) return demoApi(action, data || {});
+  if (DEMO || (PREVIEW && action.indexOf('oq.hr.') !== 0)) return demoApi(action, data || {});
   return fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ action: action, data: data || {}, auth: { initData: TG.initData } }) })
     .then(function(r){ return r.json(); })
@@ -273,7 +274,8 @@ function daysToExam(){
 /* ---------- Ekranlar ---------- */
 function topHtml(){
   return '<div class="top"><img src="logo.png" alt=""><div><b>Darslarim</b><small>Doctor Ali · Guruh ' + esc(state.data.me.group) + '</small></div>' + fsBtn() + '</div>' +
-    (DEMO ? '<div class="demo">Namuna rejim: ma\'lumotlar haqiqiy emas</div>' : '');
+    (PREVIEW ? '<div class="demo" style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>Nomzod ko\'rinishi · namuna</span><button type="button" class="pill" id="back-hr" style="cursor:pointer;font:inherit;font-weight:700">← HR paneliga qaytish</button></div>'
+      : (DEMO ? '<div class="demo">Namuna rejim: ma\'lumotlar haqiqiy emas</div>' : ''));
 }
 function matRow(day, m){
   return '<button type="button" class="glass mat" data-open="' + day + ':' + m.t + '">' + icoFor(m.turi) +
@@ -492,7 +494,7 @@ function hrStart(){
 function hrGroupObj(){ var gs = (state.hr && state.hr.groups) || []; return gs.filter(function(g){ return g.name === state.hrGroup; })[0] || null; }
 function hrTop(){
   return '<div class="top"><img src="logo.png" alt=""><div><b>Darslarim</b><small>HR paneli' + (state.hr && state.hr.name ? ' · ' + esc(state.hr.name) : '') + '</small></div>' +
-    '<a class="pill" style="margin-left:auto;text-decoration:none" href="?demo=1" title="Nomzod ko\'radigan ko\'rinish (namuna)">👁 Nomzod</a>' + fsBtn() + '</div>' +
+    '<button type="button" class="pill" id="to-trainee" style="margin-left:auto;cursor:pointer;font:inherit;font-size:12px;font-weight:600" title="Nomzod ko\'radigan ko\'rinish (namuna)">👁 Nomzod</button>' + fsBtn() + '</div>' +
     (DEMO ? '<div class="demo">Namuna rejim: ma\'lumotlar haqiqiy emas</div>' : '');
 }
 function hrTabs(){
@@ -652,6 +654,13 @@ function hrQsHtml(){
 
 /* --- HR hodisalari --- */
 document.addEventListener('click', function(e){
+  var bb = e.target.closest('#to-trainee, #back-hr');
+  if (bb) {
+    e.stopPropagation();
+    if (bb.id === 'to-trainee') { PREVIEW = true; state.mode = 'preview'; state.sheet = null; state.tab = 'home'; state.day = null; state.data = { me: demoDb.me, days: demoDb.days }; }
+    else { PREVIEW = false; state.mode = 'hr'; state.tab = 'hr-mats'; }
+    haptic(); render(); window.scrollTo(0, 0); return;
+  }
   if (state.mode !== 'hr') return;
   var c = e.target.closest('[data-close]'); if (c && !(state.sheet && state.sheet.busy)) { state.sheet = null; render(); return; }
   var b = e.target.closest('button'); if (!b || b.disabled) return;
