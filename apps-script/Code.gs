@@ -117,6 +117,8 @@ function doPost(e) {
     return json_({ ok: false, error: "So'rov noto'g'ri formatda" });
   }
   try {
+    // Nomzodlar ilovasi («Darslarim»): o'quv boti imzosi bilan kiradi
+    if (String(req.action || '').indexOf('oq.') === 0) return json_(oquvApi_(req));
     var user = authorize_(req.auth || {});
     var data = req.data || {};
     switch (req.action) {
@@ -835,6 +837,7 @@ function oquvBotUlash() {
   });
   if (!r.ok) throw new Error("Botni ulab bo'lmadi: " + (r.description || ''));
   tg_('setMyCommands', { commands: [{ command: 'start', description: 'Boshlash' }] });
+  tg_('setChatMenuButton', { menu_button: { type: 'web_app', text: 'Darslarim', web_app: { url: OQUV_APP_URL } } });
   tg_('setMyDescription', { description: "O'qish davridagi qo'llanmalar shu botga keladi. Boshlash uchun «Start» ni bosing." });
   props.setProperty('OQUV_BOT_USERNAME', me.result.username);
   var link = 'https://t.me/' + me.result.username;
@@ -1075,7 +1078,7 @@ function deliver_(chats, day, mats, opts) {
   if (!opts.noButton) {
     rounds.push(function (c) {
       return { method: 'sendMessage', payload: { chat_id: c, text: day + "-kun materiallarini o'qib bo'ldingizmi?",
-        reply_markup: ikb_([[b_("✅ O'qidim", 'r|' + day)]]) } };
+        reply_markup: ikb_([[b_("✅ O'qidim", 'r|' + day)], [appBtn_()]]) } };
     });
   }
   rounds.forEach(function (make, i) {
@@ -1153,7 +1156,8 @@ function welcome_(chat, c) {
     'Guruh: ' + c['Guruh'] + '\n' +
     (start ? "O'qish: " + shortDate_(start) + ' – ' + shortDate_(last) + '\n' : '') +
     (g['Imtihon sanasi'] ? 'Imtihon: ' + fmtDate_(g['Imtihon sanasi']) + '\n' : '') +
-    "\nQo'llanmalar shu botga keladi. Oldingi kunlarni «" + BTN.MATS + "» tugmasi orqali qayta ochasiz.", traineeKb_());
+    "\nQo'llanmalar shu botga keladi. Hammasini chiroyli ko'rinishda «Darslarim» ilovasida ochasiz.", traineeKb_());
+  send_(chat, '📱 Darslar, materiallar va davomatingiz bitta ilovada:', ikb_([[appBtn_()]]));
 }
 
 /** Nomzod botga kech ulansa, HR allaqachon yuborgan kunlarni unga yetkazadi. */
@@ -1210,20 +1214,29 @@ function traineeCallback_(p, from, chat, mid) {
     return '';
   }
   if (p[0] === 'r') {
-    withLock_(function () {
-      var log = table_(SHEETS.YUBORISHLAR);
-      var find = function () {
-        return log.rows.filter(function (x) { return String(x['Guruh']) === String(c['Guruh']) && Number(x['Kun']) === day && String(x['Nomzod ID']) === String(c['ID']); })[0];
-      };
-      if (!find()) upsertLog_(log, c['Guruh'], day, c, LOG_ST.SENT);
-      var r = log.rows.filter(function (x) { return String(x['Guruh']) === String(c['Guruh']) && Number(x['Kun']) === day && String(x['Nomzod ID']) === String(c['ID']); })[0];
-      if (r && !r["O'qidi"]) setCell_(log, r._row, "O'qidi", new Date());
-    });
+    markRead_(c, day);
     tg_('editMessageReplyMarkup', { chat_id: chat, message_id: mid, reply_markup: ikb_([[b_("✅ O'qildi", 'ok')]]) });
     return 'Rahmat! Belgilandi ✅';
   }
   if (p[0] === 'ok') return 'Allaqachon belgilangan';
   return '';
+}
+
+/** Nomzod + kun qatorini topadi, bo'lmasa «Yuborildi» bilan yaratadi. Qulf ichida chaqiriladi. */
+function logRowFor_(log, c, day) {
+  var find = function () {
+    return log.rows.filter(function (x) { return String(x['Guruh']) === String(c['Guruh']) && Number(x['Kun']) === Number(day) && String(x['Nomzod ID']) === String(c['ID']); })[0];
+  };
+  if (!find()) upsertLog_(log, c['Guruh'], day, c, LOG_ST.SENT);
+  return find();
+}
+
+function markRead_(c, day) {
+  withLock_(function () {
+    var log = table_(SHEETS.YUBORISHLAR);
+    var r = logRowFor_(log, c, day);
+    if (r && !r["O'qidi"]) setCell_(log, r._row, "O'qidi", new Date());
+  });
 }
 
 // --- HR tomoni --------------------------------------------------------------
@@ -1448,4 +1461,148 @@ function remind_(chat, group, day) {
   var n = res.filter(function (r) { return r.ok; }).length;
   send_(chat, '🔔 Eslatma yuborildi: ' + n + ' nomzod.', hrKb_());
   return 'Yuborildi';
+}
+
+
+// ---------------------------------------------------------------------------
+// «Darslarim» — nomzodlar uchun mini ilova (o'quv botining menyu tugmasi)
+// ---------------------------------------------------------------------------
+var OQUV_APP_URL = 'https://abduqodirismoilov16-eng.github.io/nomzod-yoli/oquv/';
+var MAX_FILE = 20 * 1024 * 1024; // Telegram bot faqat 20 MB gacha faylni yuklab bera oladi
+
+function appBtn_() { return { text: '📱 Darslarim ilovasini ochish', web_app: { url: OQUV_APP_URL } }; }
+
+function oquvApi_(req) {
+  var token = oquvToken_();
+  if (!token) throw userError_("O'quv boti hali sozlanmagan", 'config');
+  var tg = verifyInitData_((req.auth || {}).initData || '', token, 24 * 3600);
+  if (!tg) throw userError_("Ilovani o'quv botidagi «Darslarim» tugmasi orqali oching", 'auth');
+  var bot = PropertiesService.getScriptProperties().getProperty('OQUV_BOT_USERNAME') || '';
+  var c = traineeByTg_(tg.id);
+  if (!c) return { ok: true, linked: false, hr: isHr_(tg.id), bot: bot };
+  if (c['Holat'] === STATUS.EXPELLED) return { ok: true, linked: true, expelled: true, bot: bot };
+  var d = req.data || {};
+  switch (req.action) {
+    case 'oq.me': return oqMe_(c, bot);
+    case 'oq.file': return oqFile_(c, d, token);
+    case 'oq.chat': return oqChat_(c, d);
+    case 'oq.read': {
+      if (openedDays_(c['Guruh']).indexOf(Number(d.day)) === -1) throw userError_('Bu kun hali ochilmagan', 'validation');
+      markRead_(c, Number(d.day));
+      return { ok: true };
+    }
+    case 'oq.ask': {
+      var text = String(d.text || '').trim();
+      if (!text) throw userError_('Savolni yozing', 'validation');
+      forwardQuestion_(c['Telegram ID'], c, text.slice(0, 1500));
+      return { ok: true };
+    }
+  }
+  throw userError_("Noma'lum amal", 'validation');
+}
+
+function oqMe_(c, bot) {
+  var g = groupRow_(c['Guruh']) || {};
+  var start = g['Boshlanish sanasi'] instanceof Date ? g['Boshlanish sanasi'] : null;
+  var opened = openedDays_(c['Guruh']);
+  var id = String(c['ID']);
+  var log = {};
+  logRows_(c['Guruh']).forEach(function (r) { if (String(r['Nomzod ID']) === id) log[Number(r['Kun'])] = r; });
+  var att = {};
+  table_(SHEETS.DAVOMAT).rows.forEach(function (a) {
+    if (String(a['Guruh']) === String(c['Guruh']) && String(a['Nomzod ID']) === id) att[Number(a['Kun'])] = a['Holat'];
+  });
+  var days = [];
+  for (var d = 1; d <= TRAINING_DAYS; d++) {
+    var date = start ? new Date(start.getTime()) : null;
+    if (date) date.setDate(date.getDate() + d - 1);
+    var isOpen = opened.indexOf(d) > -1;
+    var seen = String((log[d] && log[d]['Ochilgan']) || '').split(/\s+/);
+    days.push({
+      day: d, date: date ? isoDate_(date) : '', open: isOpen,
+      read: !!(log[d] && log[d]["O'qidi"]), att: att[d] || '',
+      mats: isOpen ? materials_(d).map(function (m) {
+        var t = Number(m['Tartib']);
+        return { t: t, nomi: String(m['Nomi'] || ''), turi: String(m['Turi'] || ''), seen: seen.indexOf('#' + t) > -1 };
+      }) : []
+    });
+  }
+  return {
+    ok: true, linked: true, bot: bot,
+    me: {
+      name: c["F.I.Sh."], first: firstName_(c["F.I.Sh."]), group: c['Guruh'],
+      start: start ? isoDate_(start) : '', exam: isoDate_(g['Imtihon sanasi']), today: start ? dayNumber_(g) : 0
+    },
+    days: days
+  };
+}
+
+function oqMaterial_(c, d) {
+  var day = Number(d.day), t = Number(d.t);
+  if (openedDays_(c['Guruh']).indexOf(day) === -1) throw userError_('Bu kun hali ochilmagan', 'validation');
+  var m = materials_(day).filter(function (x) { return Number(x['Tartib']) === t; })[0];
+  if (!m) throw userError_("Material topilmadi. Ro'yxatni yangilang", 'validation');
+  return { day: day, t: t, m: m };
+}
+
+function markOpened_(c, day, t) {
+  withLock_(function () {
+    ensureColumn_(SHEETS.YUBORISHLAR, 'Ochilgan');
+    var log = table_(SHEETS.YUBORISHLAR);
+    var r = logRowFor_(log, c, day);
+    if (!r) return;
+    var v = String(r['Ochilgan'] || '').trim();
+    var tags = v ? v.split(/\s+/) : [];
+    if (tags.indexOf('#' + t) === -1) { tags.push('#' + t); setCell_(log, r._row, 'Ochilgan', tags.join(' ')); }
+  });
+}
+
+/** Material qanday ko'rsatiladi: pdf, docx, video, image, audio, link yoki chat (ilovada ochib bo'lmaydi). */
+function viewKind_(turi, path) {
+  var ext = (String(path || '').match(/\.([a-z0-9]+)$/i) || ['', ''])[1].toLowerCase();
+  if (turi === 'Havola') return 'link';
+  if (ext === 'pdf') return 'pdf';
+  if (ext === 'docx') return 'docx';
+  if (['mp4', 'm4v', 'mov', 'webm'].indexOf(ext) > -1 || turi === 'Video') return 'video';
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif'].indexOf(ext) > -1 || turi === 'Rasm') return 'image';
+  if (['mp3', 'm4a', 'aac', 'wav'].indexOf(ext) > -1 || turi === 'Audio') return 'audio';
+  return 'chat';
+}
+
+var VIEW_MIME = { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', image: 'image/jpeg', audio: 'audio/mpeg' };
+
+function oqFile_(c, d, token) {
+  var x = oqMaterial_(c, d), m = x.m;
+  markOpened_(c, x.day, x.t);
+  var base = { ok: true, name: String(m['Nomi'] || ''), turi: String(m['Turi'] || '') };
+  if (m['Turi'] === 'Havola') {
+    var txt = String(m['Fayl ID']);
+    base.kind = 'link'; base.url = (txt.match(/https?:\/\/\S+/) || [''])[0]; base.text = txt;
+    return base;
+  }
+  var info = tg_('getFile', { file_id: String(m['Fayl ID']) });
+  var path = info.ok && info.result ? info.result.file_path : '';
+  var kind = viewKind_(m['Turi'], path);
+  var size = info.ok && info.result ? Number(info.result.file_size || 0) : 0;
+  if (!info.ok || !path || size > MAX_FILE || kind === 'chat') {
+    base.kind = 'chat';
+    base.reason = (!info.ok || size > MAX_FILE) ? 'big' : 'format';
+    return base;
+  }
+  var res = UrlFetchApp.fetch('https://api.telegram.org/file/bot' + token + '/' + path, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) { base.kind = 'chat'; base.reason = 'big'; return base; }
+  var ext = (path.match(/\.([a-z0-9]+)$/i) || ['', ''])[1].toLowerCase();
+  base.kind = kind;
+  base.mime = kind === 'video' ? (ext === 'webm' ? 'video/webm' : (ext === 'mov' ? 'video/quicktime' : 'video/mp4')) :
+    (kind === 'image' && ext === 'png' ? 'image/png' : VIEW_MIME[kind]);
+  base.data = Utilities.base64Encode(res.getBlob().getBytes());
+  return base;
+}
+
+function oqChat_(c, d) {
+  var x = oqMaterial_(c, d);
+  var r = tgMany_([materialCall_(String(c['Telegram ID']), x.m)])[0];
+  if (!r || !r.ok) throw userError_("Chatga yuborib bo'lmadi. Botni qayta ishga tushiring (/start)", 'tg');
+  markOpened_(c, x.day, x.t);
+  return { ok: true };
 }
