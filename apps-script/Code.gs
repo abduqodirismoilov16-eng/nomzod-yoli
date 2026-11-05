@@ -8,6 +8,7 @@
  * Script Properties (Loyiha sozlamalari → Skript xususiyatlari):
  *   BOT_TOKEN  — BotFather bergan token (Telegram orqali kirishni tekshirish uchun)
  *   PIN        — brauzerdan kirish uchun PIN kod (kamida 6 raqam)
+ *   OQUV_BOT_TOKEN — o'quv botining tokeni (3-bosqich: qo'llanmalar)
  */
 
 var SHEETS = {
@@ -18,12 +19,14 @@ var SHEETS = {
   DAVOMAT: 'Davomat',
   TOPSHIRIQLAR: 'Topshiriqlar',
   IMTIHON: 'Imtihon',
-  SOZLAMALAR: 'Sozlamalar'
+  SOZLAMALAR: 'Sozlamalar',
+  QOLLANMALAR: "Qo'llanmalar",
+  YUBORISHLAR: 'Yuborishlar'
 };
 
 var HEADERS = {
   Nomzodlar: ['ID', 'Suhbat sanasi', "F.I.Sh.", 'Telefon', "Tug'ilgan sana", 'Yosh', 'Vakansiya',
-    "E'lon manbai", 'Holat', 'Guruh', 'Qoldirgan kunlar', 'Imtihon balli', 'HR', 'Yangilangan'],
+    "E'lon manbai", 'Holat', 'Guruh', 'Qoldirgan kunlar', 'Imtihon balli', 'HR', 'Yangilangan', 'Telegram ID'],
   Anketa: ['ID', 'Suhbat sanasi', "F.I.Sh.", "Tug'ilgan sana", 'Yosh', 'Telefon', 'Millati', 'Oilaviy holati',
     'Viloyat', 'Shahar / tuman', 'Mahalla', "Ko'cha", 'Uy',
     "Ma'lumoti", "OTM nomi", 'Fakultet', 'Kurs',
@@ -37,7 +40,9 @@ var HEADERS = {
   Davomat: ['Sana', 'Guruh', 'Kun', 'Nomzod ID', "F.I.Sh.", 'Holat', 'Baho (1-5)', 'Izoh'],
   Topshiriqlar: ['№', 'Topshiriq', 'Baholash mezoni', 'Maksimal ball', 'Faol'],
   Imtihon: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Guruh', 'Ballar', 'Jami ball', 'Natija', 'HR izohi'],
-  Sozlamalar: ['Kalit', 'Qiymat', 'Izoh']
+  Sozlamalar: ['Kalit', 'Qiymat', 'Izoh'],
+  "Qo'llanmalar": ['Kun', 'Tartib', 'Nomi', 'Turi', 'Fayl ID', 'Faol', "Qo'shilgan"],
+  Yuborishlar: ['Sana', 'Guruh', 'Kun', 'Nomzod ID', "F.I.Sh.", 'Holat', "O'qidi"]
 };
 
 var DEFAULT_SETTINGS = [
@@ -71,6 +76,11 @@ function setup() {
     var existing = sh.getLastColumn() > 0 ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0] : [];
     if (existing.join('') === '') {
       sh.getRange(1, 1, 1, h.length).setValues([h]);
+    } else {
+      // Keyingi bosqichlarda qo'shilgan ustunlarni oxiriga qo'shadi, mavjudlariga tegmaydi
+      var missing = h.filter(function (x) { return existing.indexOf(x) === -1; });
+      if (missing.length) sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing])
+        .setFontWeight('bold').setBackground('#e2f4ea').setWrap(true);
     }
     sh.getRange(1, 1, 1, h.length).setFontWeight('bold').setBackground('#e2f4ea').setWrap(true);
     sh.setFrozenRows(1);
@@ -98,6 +108,8 @@ function doGet() {
 }
 
 function doPost(e) {
+  // O'quv botidan kelgan Telegram xabarlari (webhook). Hech narsa qaytarmaymiz: Telegram 200 javobini oladi.
+  if (e && e.parameter && e.parameter.bot) { oquvWebhook_(e); return; }
   var req;
   try {
     req = JSON.parse(e.postData.contents);
@@ -759,4 +771,650 @@ function search_(q) {
   }).reverse().slice(0, 30).map(function (r) {
     return { id: r['ID'], date: fmtDate_(r['Suhbat sanasi']), name: r["F.I.Sh."], phone: r['Telefon'], vakansiya: r['Vakansiya'], holat: r['Holat'] };
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// 3-bosqich: o'quv boti (qo'llanmalarni nomzodlarga Telegram orqali yetkazish)
+// ---------------------------------------------------------------------------
+var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbx-yrGtRqw4LaTrssUCaMdCKevyOScvHo3Oid5BO8mibSZMFc_Y9-MtlWgE3YW-7hQeIA/exec';
+var LOG_ST = { SENT: 'Yuborildi', NOTLINKED: 'Ulanmagan', FAIL: 'Yetkazilmadi' };
+var BTN = {
+  MATS: "📚 Qo'llanmalar", PLAN: '📅 Jadval', ASK: '❓ Savol berish',
+  SEND: '📤 Yuborish', REPORT: '📊 Hisobot', LIST: '📂 Materiallar'
+};
+
+/**
+ * Bir marta ishga tushiring (OQUV_BOT_TOKEN qo'shilgan va yangi versiya deploy qilingandan keyin):
+ * varaqlarni yaratadi va botni shu skriptga ulaydi.
+ */
+function oquvBotUlash() {
+  if (!oquvToken_()) throw new Error("Avval Project Settings → Script Properties'ga OQUV_BOT_TOKEN qo'shing");
+  setup();
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty('OQUV_WEBHOOK_KEY');
+  if (!key) { key = Utilities.getUuid().replace(/-/g, ''); props.setProperty('OQUV_WEBHOOK_KEY', key); }
+  var me = tg_('getMe', {});
+  if (!me.ok) throw new Error("OQUV_BOT_TOKEN noto'g'ri: " + (me.description || ''));
+  if (me.result.id && String(props.getProperty('BOT_TOKEN') || '').indexOf(String(me.result.id) + ':') === 0) {
+    throw new Error("OQUV_BOT_TOKEN HR botining tokeni bilan bir xil. O'quv boti uchun yangi bot oching");
+  }
+  var r = tg_('setWebhook', {
+    url: WEB_APP_URL + '?bot=' + key, allowed_updates: ['message', 'callback_query'],
+    drop_pending_updates: true, max_connections: 10
+  });
+  if (!r.ok) throw new Error("Botni ulab bo'lmadi: " + (r.description || ''));
+  tg_('setMyCommands', { commands: [{ command: 'start', description: 'Boshlash' }] });
+  tg_('setMyDescription', { description: "O'qish davridagi qo'llanmalar shu botga keladi. Boshlash uchun «Start» ni bosing." });
+  props.setProperty('OQUV_BOT_USERNAME', me.result.username);
+  var link = 'https://t.me/' + me.result.username;
+  Logger.log('✅ Bot ulandi: @' + me.result.username + '\nNomzodlar uchun havola: ' + link);
+  return link;
+}
+
+/** Muammo bo'lsa ishga tushiring: bot holatini jurnalga chiqaradi. */
+function oquvBotHolati() {
+  var info = tg_('getWebhookInfo', {});
+  var r = info.result || {};
+  Logger.log('Kutayotgan xabarlar: ' + r.pending_update_count + '\nOxirgi xato: ' + (r.last_error_message || "yo'q") +
+    '\nUlangan manzil: ' + (r.url ? r.url.split('?')[0] : "yo'q"));
+  return info;
+}
+
+function oquvToken_() { return PropertiesService.getScriptProperties().getProperty('OQUV_BOT_TOKEN'); }
+
+function tgReq_(method, payload) {
+  return {
+    url: 'https://api.telegram.org/bot' + oquvToken_() + '/' + method,
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true, payload: JSON.stringify(payload)
+  };
+}
+
+function tgParse_(res) {
+  try { return JSON.parse(res.getContentText()); } catch (e) { return { ok: false }; }
+}
+
+function tg_(method, payload) {
+  var q = tgReq_(method, payload);
+  return tgParse_(UrlFetchApp.fetch(q.url, q));
+}
+
+/** Ko'p xabarni parallel yuboradi (Telegram cheklovi uchun 25 tadan, oralig'ida 1 soniya). */
+function tgMany_(calls) {
+  var out = [];
+  for (var i = 0; i < calls.length; i += 25) {
+    if (i > 0) Utilities.sleep(1000);
+    var part = calls.slice(i, i + 25).map(function (c) { return tgReq_(c.method, c.payload); });
+    UrlFetchApp.fetchAll(part).forEach(function (res) { out.push(tgParse_(res)); });
+  }
+  return out;
+}
+
+function send_(chat, text, markup) {
+  var p = { chat_id: chat, text: text, disable_web_page_preview: true };
+  if (markup) p.reply_markup = markup;
+  return tg_('sendMessage', p);
+}
+
+function edit_(chat, mid, text, markup) {
+  var p = { chat_id: chat, message_id: mid, text: text, disable_web_page_preview: true };
+  if (markup) p.reply_markup = markup;
+  return tg_('editMessageText', p);
+}
+
+function ikb_(rows) { return { inline_keyboard: rows }; }
+function b_(text, data) { return { text: text, callback_data: data }; }
+
+function traineeKb_() {
+  return { keyboard: [[{ text: BTN.MATS }, { text: BTN.PLAN }], [{ text: BTN.ASK }]], resize_keyboard: true, is_persistent: true };
+}
+function hrKb_() {
+  return { keyboard: [[{ text: BTN.SEND }, { text: BTN.REPORT }], [{ text: BTN.LIST }]], resize_keyboard: true, is_persistent: true };
+}
+function contactKb_() {
+  return { keyboard: [[{ text: '📱 Telefon raqamni yuborish', request_contact: true }]], resize_keyboard: true, one_time_keyboard: true };
+}
+
+function hrIds_() { return String(getSetting_('HR Telegram ID') || '').split(/[,\s]+/).filter(String); }
+function isHr_(id) { return hrIds_().indexOf(String(id)) > -1; }
+
+/** O'quv boti orqali HR'ga xabar. Yetmasa (HR botga /start yozmagan bo'lsa) HR botidan yuboradi. */
+function hrSend_(text, markup) {
+  var ok = false;
+  hrIds_().forEach(function (id) { if (send_(id, text, markup).ok) ok = true; });
+  if (!ok) notify_(text + "\n\n(O'quv botiga /start yozing, shunda bunday xabarlar o'sha botdan keladi.)");
+}
+
+function withLock_(fn) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try { return fn(); } finally { lock.releaseLock(); }
+}
+
+// --- Kirish nuqtasi ---------------------------------------------------------
+function oquvWebhook_(e) {
+  var key = PropertiesService.getScriptProperties().getProperty('OQUV_WEBHOOK_KEY');
+  if (!key || String(e.parameter.bot) !== key) return;
+  var u;
+  try { u = JSON.parse(e.postData.contents); } catch (err) { return; }
+  // Telegram bir xabarni qayta yuborsa, ikkinchi marta ishlamaymiz
+  var cache = CacheService.getScriptCache();
+  var ck = 'upd_' + u.update_id;
+  if (cache.get(ck)) return;
+  cache.put(ck, '1', 21600);
+  var chat = (u.message && u.message.chat && u.message.chat.id) || (u.callback_query && u.callback_query.from.id);
+  try {
+    if (u.callback_query) onCallback_(u.callback_query);
+    else if (u.message && u.message.chat.type === 'private') onMessage_(u.message);
+  } catch (err) {
+    console.error(err);
+    if (chat) send_(chat, (err && err.userMessage) || "Xatolik yuz berdi. Birozdan keyin qayta urinib ko'ring.");
+  }
+}
+
+function onMessage_(m) {
+  if (isHr_(m.from.id)) return onHrMessage_(m);
+  return onTraineeMessage_(m);
+}
+
+function onCallback_(q) {
+  var p = String(q.data || '').split('|');
+  var chat = q.message && q.message.chat.id, mid = q.message && q.message.message_id;
+  var answer = '';
+  // Uzoq davom etadigan amallarda tugmani darhol "bo'shatamiz"
+  var early = ['sy', 'sa', 'rm', 'd', 'ml'].indexOf(p[0]) > -1;
+  if (early) tg_('answerCallbackQuery', { callback_query_id: q.id, text: '⏳' });
+  try {
+    answer = (isHr_(q.from.id) ? hrCallback_(p, chat, mid) : traineeCallback_(p, q.from, chat, mid)) || '';
+  } finally {
+    if (!early) tg_('answerCallbackQuery', { callback_query_id: q.id, text: answer });
+  }
+}
+
+// --- Ma'lumotlar ------------------------------------------------------------
+function ensureColumn_(name, header) {
+  var sh = sheet_(name);
+  var lastCol = Math.max(sh.getLastColumn(), 1);
+  var headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (headers.indexOf(header) === -1) sh.getRange(1, headers.join('') === '' ? 1 : lastCol + 1).setValue(header);
+}
+
+function traineeByTg_(tgId) {
+  var found = null;
+  table_(SHEETS.NOMZODLAR).rows.forEach(function (r) {
+    if (r['Telegram ID'] !== '' && r['Telegram ID'] !== undefined && String(r['Telegram ID']) === String(tgId)) found = r;
+  });
+  return found;
+}
+
+function groupRow_(name) {
+  return table_(SHEETS.GURUHLAR).rows.filter(function (g) { return String(g['Guruh']) === String(name); })[0] || null;
+}
+
+function dayNumber_(g) {
+  var s = isoToDate_(isoDate_(g['Boshlanish sanasi'])), t = isoToDate_(isoDate_(new Date()));
+  if (!s) return 0;
+  return Math.round((t - s) / 86400000) + 1;
+}
+
+function shortDate_(v) {
+  return v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'dd.MM') : String(v || '');
+}
+
+function materials_(day) {
+  var sh = sheet_(SHEETS.QOLLANMALAR);
+  if (!sh) return [];
+  return table_(SHEETS.QOLLANMALAR).rows.filter(function (r) {
+    return Number(r['Kun']) === Number(day) && r['Fayl ID'] !== '' && String(r['Faol']).trim().toLowerCase() !== "yo'q";
+  }).sort(function (a, b) { return (Number(a['Tartib']) || 0) - (Number(b['Tartib']) || 0); });
+}
+
+function logRows_(group, day) {
+  var sh = sheet_(SHEETS.YUBORISHLAR);
+  if (!sh) return [];
+  return table_(SHEETS.YUBORISHLAR).rows.filter(function (r) {
+    return String(r['Guruh']) === String(group) && (day === undefined || Number(r['Kun']) === Number(day));
+  });
+}
+
+function openedDays_(group) {
+  var days = {};
+  logRows_(group).forEach(function (r) { days[Number(r['Kun'])] = true; });
+  return Object.keys(days).map(Number).sort(function (a, b) { return a - b; });
+}
+
+function members_(group) {
+  return table_(SHEETS.NOMZODLAR).rows.filter(function (m) {
+    return String(m['Guruh']) === String(group) && m['Holat'] !== STATUS.EXPELLED && m['Holat'] !== STATUS.REJECTED;
+  });
+}
+
+function firstName_(fio) {
+  var p = String(fio || '').trim().split(/\s+/);
+  return p.length > 1 ? p[1] : p[0];
+}
+
+/** Yuborishlar varag'ida nomzod + kun qatorini yangilaydi yoki qo'shadi. */
+function upsertLog_(log, group, day, m, holat) {
+  var id = String(m['ID']);
+  var r = log.rows.filter(function (x) { return String(x['Guruh']) === String(group) && Number(x['Kun']) === Number(day) && String(x['Nomzod ID']) === id; })[0];
+  if (r) {
+    if (r['Holat'] !== holat && !(holat !== LOG_ST.SENT && r['Holat'] === LOG_ST.SENT)) setCell_(log, r._row, 'Holat', holat);
+    if (holat === LOG_ST.SENT) setCell_(log, r._row, 'Sana', new Date());
+    return;
+  }
+  var row = {};
+  row['Sana'] = new Date(); row['Guruh'] = group; row['Kun'] = Number(day); row['Nomzod ID'] = id;
+  row["F.I.Sh."] = m["F.I.Sh."]; row['Holat'] = holat; row["O'qidi"] = '';
+  appendObj_(log.sh, HEADERS.Yuborishlar, row);
+  log.rows.push({ _row: log.sh.getLastRow(), 'Guruh': group, 'Kun': Number(day), 'Nomzod ID': id, 'Holat': holat });
+}
+
+// --- Materiallarni yetkazish ------------------------------------------------
+var SEND_BY_TYPE = {
+  'Video': ['sendVideo', 'video'], 'Rasm': ['sendPhoto', 'photo'],
+  'Audio': ['sendAudio', 'audio'], 'Ovozli': ['sendVoice', 'voice']
+};
+
+function materialCall_(chat, mat) {
+  var turi = String(mat['Turi']), name = String(mat['Nomi'] || '');
+  if (turi === 'Havola') {
+    return { method: 'sendMessage', payload: { chat_id: chat, text: '🔗 ' + String(mat['Fayl ID']), protect_content: true } };
+  }
+  var how = SEND_BY_TYPE[turi] || ['sendDocument', 'document'];
+  var p = { chat_id: chat, caption: name ? '📄 ' + name : '', protect_content: true };
+  p[how[1]] = String(mat['Fayl ID']);
+  return { method: how[0], payload: p };
+}
+
+/**
+ * Bir kunning materiallarini bir nechta nomzodga yuboradi. Har bir chatda tartib saqlanadi:
+ * avval sarlavha, keyin materiallar, oxirida «O'qidim» tugmasi.
+ * Natija: { chatId: true/false }
+ */
+function deliver_(chats, day, mats, opts) {
+  opts = opts || {};
+  var ok = { _bad: [] };
+  chats.forEach(function (c) { ok[c] = true; });
+  var rounds = [];
+  rounds.push(function (c) {
+    return { method: 'sendMessage', payload: { chat_id: c, text: '📘 ' + day + "-kun materiallari\nJami " + mats.length +
+      " ta. O'qib bo'lgach, oxiridagi «✅ O'qidim» tugmasini bosing." + (opts.note ? '\n\n' + opts.note : '') } };
+  });
+  mats.forEach(function (mat) { rounds.push(function (c) { return materialCall_(c, mat); }); });
+  if (!opts.noButton) {
+    rounds.push(function (c) {
+      return { method: 'sendMessage', payload: { chat_id: c, text: day + "-kun materiallarini o'qib bo'ldingizmi?",
+        reply_markup: ikb_([[b_("✅ O'qidim", 'r|' + day)]]) } };
+    });
+  }
+  rounds.forEach(function (make, i) {
+    var live = chats.filter(function (c) { return ok[c]; });
+    if (!live.length) return;
+    var res = tgMany_(live.map(make));
+    live.forEach(function (c, j) { if (!res[j].ok && i === 0) ok[c] = false; });
+    var allFailed = res.length && res.every(function (r) { return !r.ok; });
+    if (i > 0 && i <= mats.length && allFailed) ok._bad.push(String(mats[i - 1]['Nomi']) + ': ' + (res[0].description || 'xato'));
+  });
+  return ok;
+}
+
+// --- Nomzod tomoni ----------------------------------------------------------
+function onTraineeMessage_(m) {
+  var chat = m.chat.id, text = String(m.text || '').trim();
+  if (m.contact) return registerTrainee_(m);
+  var c = traineeByTg_(m.from.id);
+  if (!c) {
+    return send_(chat, "Assalomu alaykum! Bu o'quv boti: o'qish davridagi qo'llanmalar shu yerga keladi.\n\n" +
+      "Boshlash uchun pastdagi «📱 Telefon raqamni yuborish» tugmasini bosing. Suhbatda qaysi raqamni yozgan bo'lsangiz, o'sha raqam kerak.", contactKb_());
+  }
+  if (c['Holat'] === STATUS.EXPELLED) {
+    return send_(chat, "Siz o'qishdan chetlatilgansiz, shuning uchun qo'llanmalar yuborilmaydi. Savol bo'lsa, HR bilan bog'laning.", { remove_keyboard: true });
+  }
+  if (text.indexOf('/start') === 0) return welcome_(chat, c);
+  if (text === BTN.MATS) return showDays_(chat, c);
+  if (text === BTN.PLAN) return showPlan_(chat, c);
+  if (text === BTN.ASK) return send_(chat, 'Savolingizni bitta xabarda yozib yuboring. HR javob berganda shu yerga keladi.', traineeKb_());
+  if (text) return forwardQuestion_(chat, c, text);
+  return send_(chat, 'Pastdagi tugmalardan foydalaning.', traineeKb_());
+}
+
+function registerTrainee_(m) {
+  var chat = m.chat.id, ct = m.contact;
+  if (String(ct.user_id || '') !== String(m.from.id)) {
+    return send_(chat, "Iltimos, boshqa odamning emas, o'zingizning raqamingizni pastdagi tugma orqali yuboring.", contactKb_());
+  }
+  var phone = normPhone_(ct.phone_number);
+  var res = withLock_(function () {
+    ensureColumn_(SHEETS.NOMZODLAR, 'Telegram ID');
+    var n = table_(SHEETS.NOMZODLAR);
+    var mine = n.rows.filter(function (r) { return normPhone_(r['Telefon']) === phone; });
+    if (!mine.length) return { err: 'notfound' };
+    var c = mine.filter(function (r) { return r['Guruh'] && r['Holat'] === STATUS.STUDYING; }).pop() ||
+      mine.filter(function (r) { return r['Guruh']; }).pop() || mine[mine.length - 1];
+    if (!c['Guruh']) return { err: 'nogroup', c: c };
+    if (c['Holat'] === STATUS.EXPELLED) return { err: 'expelled', c: c };
+    // Shu Telegram akkaunt boshqa qatorga bog'langan bo'lsa, o'sha bog'lanishni olib tashlaymiz
+    n.rows.forEach(function (r) {
+      if (r._row !== c._row && String(r['Telegram ID']) === String(m.from.id)) setCell_(n, r._row, 'Telegram ID', '');
+    });
+    setCell_(n, c._row, 'Telegram ID', String(m.from.id));
+    c['Telegram ID'] = String(m.from.id);
+    return { c: c };
+  });
+  if (res.err === 'notfound') {
+    send_(chat, 'Bu raqam (' + fmtPhone_(phone) + ") nomzodlar ro'yxatida topilmadi.\n\nSuhbatda boshqa raqam yozgan bo'lsangiz, HR'ga ayting, u raqamni to'g'rilab beradi. Keyin qayta /start bosing.", { remove_keyboard: true });
+    hrSend_('⚠️ Botga ro\'yxatda yo\'q raqam kirmoqchi bo\'ldi: ' + fmtPhone_(phone) +
+      (m.from.first_name ? ' (' + [m.from.first_name, m.from.last_name].filter(String).join(' ') + ')' : '') +
+      "\nAgar bu nomzod bo'lsa, Nomzodlar varag'ida uning telefonini shu raqamga o'zgartiring.");
+    return;
+  }
+  if (res.err === 'nogroup') return send_(chat, "Siz hali o'quv guruhiga qo'shilmagansiz. Guruhga qo'shilgach, shu yerga /start yozing.", { remove_keyboard: true });
+  if (res.err === 'expelled') return send_(chat, "Siz o'qishdan chetlatilgansiz, shuning uchun qo'llanmalar yuborilmaydi.", { remove_keyboard: true });
+  welcome_(chat, res.c);
+  deliverPending_(res.c);
+}
+
+function welcome_(chat, c) {
+  var g = groupRow_(c['Guruh']) || {};
+  var start = g['Boshlanish sanasi'], last = '';
+  if (start instanceof Date) { last = new Date(start.getTime()); last.setDate(last.getDate() + TRAINING_DAYS - 1); }
+  send_(chat, '✅ Xush kelibsiz, ' + firstName_(c["F.I.Sh."]) + '!\n\n' +
+    'Guruh: ' + c['Guruh'] + '\n' +
+    (start ? "O'qish: " + shortDate_(start) + ' – ' + shortDate_(last) + '\n' : '') +
+    (g['Imtihon sanasi'] ? 'Imtihon: ' + fmtDate_(g['Imtihon sanasi']) + '\n' : '') +
+    "\nQo'llanmalar shu botga keladi. Oldingi kunlarni «" + BTN.MATS + "» tugmasi orqali qayta ochasiz.", traineeKb_());
+}
+
+/** Nomzod botga kech ulansa, HR allaqachon yuborgan kunlarni unga yetkazadi. */
+function deliverPending_(c) {
+  var id = String(c['ID']);
+  var rows = logRows_(c['Guruh']).filter(function (r) { return String(r['Nomzod ID']) === id && r['Holat'] !== LOG_ST.SENT; });
+  var days = {};
+  rows.forEach(function (r) { days[Number(r['Kun'])] = true; });
+  Object.keys(days).map(Number).sort(function (a, b) { return a - b; }).forEach(function (day) {
+    var mats = materials_(day);
+    if (!mats.length) return;
+    var ok = deliver_([c['Telegram ID']], day, mats);
+    if (ok[c['Telegram ID']]) withLock_(function () { upsertLog_(table_(SHEETS.YUBORISHLAR), c['Guruh'], day, c, LOG_ST.SENT); });
+  });
+}
+
+function showDays_(chat, c) {
+  var days = openedDays_(c['Guruh']);
+  if (!days.length) return send_(chat, "Hozircha material yo'q. HR yuborganda shu yerga keladi.", traineeKb_());
+  send_(chat, 'Qaysi kunning materiallarini ochamiz?', ikb_([days.map(function (d) { return b_(d + '-kun', 'd|' + d); })]));
+}
+
+function showPlan_(chat, c) {
+  var g = groupRow_(c['Guruh']);
+  if (!g) return send_(chat, "Guruh ma'lumoti topilmadi. HR bilan bog'laning.", traineeKb_());
+  var n = dayNumber_(g), days = openedDays_(c['Guruh']);
+  var lines = ['📅 Guruh ' + c['Guruh']];
+  for (var i = 1; i <= TRAINING_DAYS; i++) {
+    var d = new Date(g['Boshlanish sanasi'].getTime ? g['Boshlanish sanasi'].getTime() : 0); d.setDate(d.getDate() + i - 1);
+    lines.push((i === n ? '👉 ' : (i < n ? '✔️ ' : '▫️ ')) + i + '-kun · ' + shortDate_(d) + (days.indexOf(i) > -1 ? ' · materiallar bor' : ''));
+  }
+  if (g['Imtihon sanasi']) lines.push('🎯 Imtihon · ' + fmtDate_(g['Imtihon sanasi']));
+  send_(chat, lines.join('\n'), traineeKb_());
+}
+
+function forwardQuestion_(chat, c, text) {
+  hrSend_('❓ Savol\n👤 ' + c["F.I.Sh."] + '\n🆔 ' + c['ID'] + ' · Guruh ' + c['Guruh'] + '\n\n' + text +
+    "\n\nJavob berish uchun shu xabarga «Ответить / Reply» qilib yozing.");
+  send_(chat, "✅ Savolingiz HR'ga yuborildi. Javob shu yerga keladi.", traineeKb_());
+}
+
+function traineeCallback_(p, from, chat, mid) {
+  var c = traineeByTg_(from.id);
+  if (!c) return "Avval /start bosib, telefon raqamingizni yuboring";
+  if (c['Holat'] === STATUS.EXPELLED) return "Siz o'qishdan chetlatilgansiz";
+  var day = Number(p[1]);
+  if (p[0] === 'd') {
+    if (openedDays_(c['Guruh']).indexOf(day) === -1) return "Bu kun hali ochilmagan";
+    var mats = materials_(day);
+    if (!mats.length) return "Bu kun uchun material yo'q";
+    var ok = deliver_([chat], day, mats);
+    if (ok[chat]) withLock_(function () { upsertLog_(table_(SHEETS.YUBORISHLAR), c['Guruh'], day, c, LOG_ST.SENT); });
+    return '';
+  }
+  if (p[0] === 'r') {
+    withLock_(function () {
+      var log = table_(SHEETS.YUBORISHLAR);
+      var find = function () {
+        return log.rows.filter(function (x) { return String(x['Guruh']) === String(c['Guruh']) && Number(x['Kun']) === day && String(x['Nomzod ID']) === String(c['ID']); })[0];
+      };
+      if (!find()) upsertLog_(log, c['Guruh'], day, c, LOG_ST.SENT);
+      var r = log.rows.filter(function (x) { return String(x['Guruh']) === String(c['Guruh']) && Number(x['Kun']) === day && String(x['Nomzod ID']) === String(c['ID']); })[0];
+      if (r && !r["O'qidi"]) setCell_(log, r._row, "O'qidi", new Date());
+    });
+    tg_('editMessageReplyMarkup', { chat_id: chat, message_id: mid, reply_markup: ikb_([[b_("✅ O'qildi", 'ok')]]) });
+    return 'Rahmat! Belgilandi ✅';
+  }
+  if (p[0] === 'ok') return 'Allaqachon belgilangan';
+  return '';
+}
+
+// --- HR tomoni --------------------------------------------------------------
+function fileOf_(m) {
+  var cap = String(m.caption || '').trim();
+  var base = function (fn) { return String(fn || '').replace(/\.[A-Za-z0-9]{1,5}$/, ''); };
+  if (m.document) {
+    var fn = String(m.document.file_name || ''), mime = String(m.document.mime_type || '');
+    var t = /pdf/i.test(mime) || /\.pdf$/i.test(fn) ? 'PDF' :
+      (/word|msword|officedocument\.wordprocessing/i.test(mime) || /\.docx?$/i.test(fn) ? 'Word' :
+        (/^video\//i.test(mime) ? 'Video fayl' : 'Fayl'));
+    return { turi: t, id: m.document.file_id, nomi: cap || base(fn) || t };
+  }
+  if (m.video) return { turi: 'Video', id: m.video.file_id, nomi: cap || base(m.video.file_name) || 'Video' };
+  if (m.photo && m.photo.length) return { turi: 'Rasm', id: m.photo[m.photo.length - 1].file_id, nomi: cap || 'Rasm' };
+  if (m.audio) return { turi: 'Audio', id: m.audio.file_id, nomi: cap || m.audio.title || base(m.audio.file_name) || 'Audio' };
+  if (m.voice) return { turi: 'Ovozli', id: m.voice.file_id, nomi: cap || 'Ovozli xabar' };
+  return null;
+}
+
+function onHrMessage_(m) {
+  var chat = m.chat.id, text = String(m.text || '').trim();
+  if (m.reply_to_message && text) {
+    var ref = String(m.reply_to_message.text || '').match(/N-\d{4}-\d+/);
+    if (ref) return hrAnswer_(chat, ref[0], text);
+  }
+  var f = fileOf_(m);
+  if (!f && /https?:\/\//i.test(text)) f = { turi: 'Havola', id: text, nomi: text.replace(/https?:\/\/\S+/gi, '').trim() || 'Havola' };
+  if (f) {
+    CacheService.getScriptCache().put('pend_' + chat + '_' + m.message_id, JSON.stringify(f), 21600);
+    var row = [];
+    for (var d = 1; d <= TRAINING_DAYS; d++) row.push(b_(d + '-kun', 'a|' + m.message_id + '|' + d));
+    return tg_('sendMessage', {
+      chat_id: chat, reply_to_message_id: m.message_id, text: '«' + f.nomi + '» (' + f.turi + ")\nQaysi kunga qo'shay?",
+      reply_markup: ikb_([row.slice(0, 3), row.slice(3), [b_('Bekor qilish', 'ax|' + m.message_id)]])
+    });
+  }
+  if (text === BTN.SEND) return pickGroup_(chat, null, 'sg', '📤 Qaysi guruhga yuboramiz?');
+  if (text === BTN.REPORT) return pickGroup_(chat, null, 'hg', '📊 Qaysi guruh hisoboti?');
+  if (text === BTN.LIST) return listMaterials_(chat);
+  var user = PropertiesService.getScriptProperties().getProperty('OQUV_BOT_USERNAME');
+  send_(chat, "Assalomu alaykum! Siz HR sifatida kirdingiz.\n\n" +
+    "➕ Material qo'shish: Word, PDF yoki videoni shu yerga yuboring yoki uzating, keyin kunni tanlang. Izoh (caption) yozsangiz, u material nomi bo'ladi. Havolani ham yuborsa bo'ladi.\n" +
+    '📤 Yuborish: guruh va kunni tanlab, materiallarni nomzodlarga yuborasiz.\n' +
+    "📊 Hisobot: kim o'qigani, kim botga ulanmagani.\n" +
+    "📂 Materiallar: kunlar bo'yicha ro'yxat.\n" +
+    "💬 Nomzod savoliga javob: savol xabariga «Reply» qilib yozing." +
+    (user ? '\n\nNomzodlar uchun havola: https://t.me/' + user : ''), hrKb_());
+}
+
+function hrAnswer_(chat, id, text) {
+  var c = table_(SHEETS.NOMZODLAR).rows.filter(function (r) { return String(r['ID']) === id; })[0];
+  if (!c || !c['Telegram ID']) return send_(chat, '⚠️ ' + id + ' botga ulanmagan, javob yuborilmadi.', hrKb_());
+  var r = send_(c['Telegram ID'], "💬 HR javobi:\n\n" + text, traineeKb_());
+  send_(chat, r.ok ? '✅ Javob yuborildi: ' + c["F.I.Sh."] : '⚠️ Yetkazib bo\'lmadi: ' + c["F.I.Sh."] + ' botni o\'chirgan bo\'lishi mumkin.', hrKb_());
+}
+
+function activeGroups_() {
+  var n = table_(SHEETS.NOMZODLAR).rows;
+  return table_(SHEETS.GURUHLAR).rows.map(function (g) {
+    var name = String(g['Guruh']);
+    var mine = n.filter(function (m) { return String(m['Guruh']) === name && m['Holat'] === STATUS.STUDYING; });
+    return { name: name, g: g, count: mine.length };
+  }).filter(function (x) { return x.count > 0 && String(x.g['Holat'] || '') !== 'Yopilgan'; }).reverse().slice(0, 8);
+}
+
+function pickGroup_(chat, mid, prefix, title) {
+  var gs = activeGroups_();
+  if (!gs.length) return send_(chat, "O'qishdagi guruh yo'q. Avval ilovada guruh yarating.", hrKb_());
+  var rows = gs.map(function (x) {
+    return [b_(x.name + ' · ' + shortDate_(x.g['Boshlanish sanasi']) + ' · ' + x.count + ' kishi', prefix + '|' + x.name)];
+  });
+  return mid ? edit_(chat, mid, title, ikb_(rows)) : send_(chat, title, ikb_(rows));
+}
+
+function pickDay_(chat, mid, group, prefix, title, onlyOpened) {
+  var g = groupRow_(group);
+  var today = g ? dayNumber_(g) : 0, opened = openedDays_(group), row = [];
+  for (var d = 1; d <= TRAINING_DAYS; d++) {
+    if (onlyOpened && opened.indexOf(d) === -1) continue;
+    row.push(b_((d === today ? '👉 ' : '') + d + '-kun' + (!onlyOpened && opened.indexOf(d) > -1 ? ' ✓' : ''), prefix + '|' + group + '|' + d));
+  }
+  if (!row.length) return edit_(chat, mid, group + " guruhga hali material yuborilmagan.");
+  edit_(chat, mid, title + (today >= 1 && today <= TRAINING_DAYS ? '\nBugun ' + today + '-kun.' : ''),
+    ikb_([row.slice(0, 3), row.slice(3)].filter(function (r) { return r.length; })));
+}
+
+function hrCallback_(p, chat, mid) {
+  var cache = CacheService.getScriptCache();
+  switch (p[0]) {
+    case 'a': {
+      var key = 'pend_' + chat + '_' + p[1], raw = cache.get(key), day = Number(p[2]);
+      if (!raw) { edit_(chat, mid, "Vaqti o'tib ketdi. Faylni qayta yuboring."); return ''; }
+      var f = JSON.parse(raw);
+      var res = withLock_(function () {
+        var t = table_(SHEETS.QOLLANMALAR);
+        var same = t.rows.filter(function (r) { return Number(r['Kun']) === day; });
+        var order = same.reduce(function (mx, r) { return Math.max(mx, Number(r['Tartib']) || 0); }, 0) + 1;
+        var row = {};
+        row['Kun'] = day; row['Tartib'] = order; row['Nomi'] = f.nomi; row['Turi'] = f.turi;
+        row['Fayl ID'] = f.id; row['Faol'] = 'Ha'; row["Qo'shilgan"] = new Date();
+        appendObj_(t.sh, HEADERS["Qo'llanmalar"], row);
+        return { order: order, total: materials_(day).length };
+      });
+      cache.remove(key);
+      edit_(chat, mid, '✅ Saqlandi: ' + day + '-kun, ' + res.order + '-material\n«' + f.nomi + '»\n\n' + day + '-kunda jami ' + res.total + ' ta material.');
+      return 'Saqlandi';
+    }
+    case 'ax':
+      cache.remove('pend_' + chat + '_' + p[1]);
+      edit_(chat, mid, 'Bekor qilindi.');
+      return '';
+    case 'x':
+      edit_(chat, mid, 'Bekor qilindi.');
+      return '';
+    case 'ml':
+      var mats = materials_(Number(p[1]));
+      deliver_([chat], Number(p[1]), mats, { noButton: true, note: "(Bu sizga ko'rish uchun, nomzodlarga yuborilmadi.)" });
+      return '';
+    case 'sg': return pickDay_(chat, mid, p[1], 'sd', '📤 ' + p[1] + ' guruh. Qaysi kun materiallarini yuboramiz?', false), '';
+    case 'hg': return pickDay_(chat, mid, p[1], 'hd', '📊 ' + p[1] + ' guruh. Qaysi kun?', true), '';
+    case 'sd': return confirmSend_(chat, mid, p[1], Number(p[2])), '';
+    case 'sy': return doSend_(chat, mid, p[1], Number(p[2]), false), '';
+    case 'sa': return doSend_(chat, mid, p[1], Number(p[2]), true), '';
+    case 'hd': return report_(chat, mid, p[1], Number(p[2])), '';
+    case 'rm': return remind_(chat, p[1], Number(p[2]));
+  }
+  return '';
+}
+
+function listMaterials_(chat) {
+  var lines = ['📂 Materiallar'], btns = [];
+  for (var d = 1; d <= TRAINING_DAYS; d++) {
+    var mats = materials_(d);
+    lines.push('\n' + d + '-kun' + (mats.length ? ':' : ": yo'q"));
+    mats.forEach(function (m, i) { lines.push('  ' + (i + 1) + '. ' + m['Nomi'] + ' (' + m['Turi'] + ')'); });
+    if (mats.length) btns.push(b_('👁 ' + d + '-kun', 'ml|' + d));
+  }
+  lines.push("\nNomini, tartibini o'zgartirish yoki o'chirish: Sheets → «Qo'llanmalar» varag'i (Faol ustuniga «Yo'q» yozing).");
+  send_(chat, lines.join('\n'), btns.length ? ikb_([btns.slice(0, 3), btns.slice(3)].filter(function (r) { return r.length; })) : hrKb_());
+}
+
+function confirmSend_(chat, mid, group, day) {
+  var mats = materials_(day);
+  if (!mats.length) return edit_(chat, mid, '⚠️ ' + day + "-kun uchun material yo'q. Avval faylni shu botga yuborib, " + day + '-kunni tanlang.');
+  var ms = members_(group), log = logRows_(group, day);
+  var sent = {};
+  log.forEach(function (r) { if (r['Holat'] === LOG_ST.SENT) sent[String(r['Nomzod ID'])] = true; });
+  var todo = ms.filter(function (m) { return !sent[String(m['ID'])]; });
+  var linked = todo.filter(function (m) { return m['Telegram ID']; }).length;
+  var lines = ['📤 ' + group + ' guruh, ' + day + '-kun', '', 'Materiallar (' + mats.length + '):'];
+  mats.forEach(function (m, i) { lines.push((i + 1) + '. ' + m['Nomi'] + ' (' + m['Turi'] + ')'); });
+  lines.push('');
+  var rows = [];
+  if (todo.length) {
+    lines.push('Oladi: ' + linked + ' nomzod' + (todo.length - linked ? '\nBotga ulanmagan: ' + (todo.length - linked) + ' (ulanishi bilan avtomatik oladi)' : ''));
+    if (ms.length - todo.length) lines.push('Oldin olgan: ' + (ms.length - todo.length) + ' (ularga qayta ketmaydi)');
+    rows.push([b_('✅ Yuborish', 'sy|' + group + '|' + day), b_('Bekor qilish', 'x')]);
+  } else {
+    lines.push('Bu kun hamma ' + ms.length + " nomzodga yuborilgan. Yangi material qo'shgan bo'lsangiz, hammaga qayta yuborishingiz mumkin.");
+    rows.push([b_('🔁 Hammaga qayta yuborish', 'sa|' + group + '|' + day), b_('Bekor qilish', 'x')]);
+  }
+  edit_(chat, mid, lines.join('\n'), ikb_(rows));
+}
+
+function doSend_(chat, mid, group, day, all) {
+  var mats = materials_(day);
+  if (!mats.length) return edit_(chat, mid, '⚠️ ' + day + "-kun uchun material yo'q.");
+  edit_(chat, mid, '⏳ ' + group + ' guruh, ' + day + '-kun yuborilmoqda…');
+  var ms = members_(group);
+  var sent = {};
+  logRows_(group, day).forEach(function (r) { if (r['Holat'] === LOG_ST.SENT) sent[String(r['Nomzod ID'])] = true; });
+  var todo = ms.filter(function (m) { return all || !sent[String(m['ID'])]; });
+  var linked = todo.filter(function (m) { return m['Telegram ID']; });
+  var ok = linked.length ? deliver_(linked.map(function (m) { return String(m['Telegram ID']); }), day, mats) : {};
+  var good = [], notLinked = [], failed = [];
+  withLock_(function () {
+    var log = table_(SHEETS.YUBORISHLAR);
+    todo.forEach(function (m) {
+      var st = !m['Telegram ID'] ? LOG_ST.NOTLINKED : (ok[String(m['Telegram ID'])] ? LOG_ST.SENT : LOG_ST.FAIL);
+      upsertLog_(log, group, day, m, st);
+      (st === LOG_ST.SENT ? good : (st === LOG_ST.NOTLINKED ? notLinked : failed)).push(m["F.I.Sh."]);
+    });
+  });
+  var lines = ['✅ ' + group + ' guruh, ' + day + '-kun yuborildi: ' + good.length + ' nomzod'];
+  if (notLinked.length) lines.push('\n⚠️ Botga ulanmagan (' + notLinked.length + "), ulanishi bilan oladi:\n• " + notLinked.join('\n• '));
+  if (failed.length) lines.push('\n❌ Yetkazilmadi (' + failed.length + "), botni o'chirgan bo'lishi mumkin:\n• " + failed.join('\n• '));
+  if (ok._bad && ok._bad.length) lines.push("\n⚠️ Bu materiallar ketmadi, faylni botga qayta yuboring:\n• " + ok._bad.join('\n• '));
+  edit_(chat, mid, lines.join('\n'));
+}
+
+function report_(chat, mid, group, day) {
+  var ms = members_(group), log = logRows_(group, day);
+  var byId = {};
+  log.forEach(function (r) { byId[String(r['Nomzod ID'])] = r; });
+  var read = [], unread = [], notLinked = [];
+  ms.forEach(function (m) {
+    var r = byId[String(m['ID'])];
+    if (!m['Telegram ID']) notLinked.push(m["F.I.Sh."]);
+    else if (r && r["O'qidi"]) read.push(m["F.I.Sh."]);
+    else unread.push(m["F.I.Sh."]);
+  });
+  var lines = ['📊 ' + group + ' guruh, ' + day + '-kun', "O'qidi: " + read.length + ' / ' + ms.length];
+  if (unread.length) lines.push("\n⏳ O'qimagan (" + unread.length + '):\n• ' + unread.join('\n• '));
+  if (notLinked.length) lines.push('\n⚠️ Botga ulanmagan (' + notLinked.length + '):\n• ' + notLinked.join('\n• '));
+  if (read.length) lines.push("\n✅ O'qidi (" + read.length + '):\n• ' + read.join('\n• '));
+  edit_(chat, mid, lines.join('\n'), unread.length ? ikb_([[b_("🔔 O'qimaganlarga eslatish", 'rm|' + group + '|' + day)]]) : null);
+}
+
+function remind_(chat, group, day) {
+  var log = logRows_(group, day), byId = {};
+  log.forEach(function (r) { byId[String(r['Nomzod ID'])] = r; });
+  var targets = members_(group).filter(function (m) {
+    var r = byId[String(m['ID'])];
+    return m['Telegram ID'] && !(r && r["O'qidi"]);
+  });
+  var res = tgMany_(targets.map(function (m) {
+    return { method: 'sendMessage', payload: { chat_id: String(m['Telegram ID']),
+      text: '⏰ Eslatma: ' + day + "-kun materiallarini o'qib chiqing va «✅ O'qidim» tugmasini bosing.\nMateriallar: «" + BTN.MATS + '» tugmasi.',
+      reply_markup: ikb_([[b_("✅ O'qidim", 'r|' + day)]]) } };
+  }));
+  var n = res.filter(function (r) { return r.ok; }).length;
+  send_(chat, '🔔 Eslatma yuborildi: ' + n + ' nomzod.', hrKb_());
+  return 'Yuborildi';
 }
