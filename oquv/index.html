@@ -15,7 +15,7 @@
   --glass:rgba(255,255,255,.10); --glass-hi:rgba(255,255,255,.16); --edge:rgba(255,255,255,.22);
   --display:"Unbounded","Onest",system-ui,sans-serif;
   --body:"Onest",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-b:max(env(safe-area-inset-bottom,0px),var(--tg-safe-area-inset-bottom,0px));
   color-scheme:dark;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -29,7 +29,7 @@ body{font-family:var(--body);color:var(--ink);font-size:15px;line-height:1.45;ba
   radial-gradient(60% 40% at 10% 100%,rgba(120,80,255,.35),transparent 70%),
   var(--navy)}
 .bg::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,transparent 40%,rgba(5,10,22,.35))}
-#app{max-width:560px;margin:0 auto;padding:calc(env(safe-area-inset-top,0px) + var(--tg-top,0px) + 14px) max(14px,env(safe-area-inset-right,0px)) calc(96px + var(--safe-b)) max(14px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px}
+#app{max-width:560px;margin:0 auto;padding:calc(max(env(safe-area-inset-top,0px),var(--tg-safe-area-inset-top,0px)) + var(--tg-content-safe-area-inset-top,0px) + 14px) max(14px,env(safe-area-inset-right,0px)) calc(96px + var(--safe-b)) max(14px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px}
 .glass{background:var(--glass);border:1px solid var(--edge);border-radius:20px;padding:14px;
   -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 10px 30px -16px rgba(0,0,0,.6)}
@@ -124,6 +124,13 @@ video,audio,.viewer img.full{width:100%;display:block;border-radius:14px;backgro
 .fade{animation:fd .28s ease both}
 @keyframes fd{from{opacity:.0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.fade,.spin{animation:none}}
+/* To'liq ekran tugmasi */
+.fsb{appearance:none;flex-shrink:0;width:38px;height:38px;border-radius:12px;display:grid;place-items:center;cursor:pointer;color:var(--ink);background:var(--glass-hi);border:1px solid var(--edge);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+.fsb svg{width:18px;height:18px}
+.top .fsb{margin-left:auto}
+.top > div{min-width:0}.top small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top .pill{white-space:nowrap;flex-shrink:0}
+.top .pill + .fsb{margin-left:6px}
 /* HR paneli */
 .mini{display:flex;gap:4px;flex-shrink:0}
 .mini button{appearance:none;width:32px;height:32px;border-radius:10px;border:1px solid var(--edge);background:var(--glass-hi);color:var(--ink);font:inherit;font-size:14px;cursor:pointer}
@@ -265,7 +272,7 @@ function daysToExam(){
 
 /* ---------- Ekranlar ---------- */
 function topHtml(){
-  return '<div class="top"><img src="logo.png" alt=""><div><b>Darslarim</b><small>Doctor Ali · Guruh ' + esc(state.data.me.group) + '</small></div></div>' +
+  return '<div class="top"><img src="logo.png" alt=""><div><b>Darslarim</b><small>Doctor Ali · Guruh ' + esc(state.data.me.group) + '</small></div>' + fsBtn() + '</div>' +
     (DEMO ? '<div class="demo">Namuna rejim: ma\'lumotlar haqiqiy emas</div>' : '');
 }
 function matRow(day, m){
@@ -351,7 +358,7 @@ function openViewer(day, t, meta){
   state.viewer = { day: day, t: t };
   tabsEl.hidden = true;
   try { TG && TG.BackButton && TG.BackButton.show(); } catch (e) {}
-  app.innerHTML = '<div class="glass vbar"><button type="button" id="v-back" aria-label="Orqaga">‹</button><div class="t"><b>' + esc(m.nomi) + '</b><small>' + day + '-kun · ' + esc(m.turi) + '</small></div></div>' +
+  app.innerHTML = '<div class="glass vbar"><button type="button" id="v-back" aria-label="Orqaga">‹</button><div class="t"><b>' + esc(m.nomi) + '</b><small>' + day + '-kun · ' + esc(m.turi) + '</small></div>' + fsBtn() + '</div>' +
     '<div id="vbody"><div class="loading"><div class="spin"></div>Yuklanmoqda…<small>Video va katta fayllar biroz vaqt olishi mumkin</small></div></div>';
   window.scrollTo(0, 0);
   api(action, { day: day, t: t }).then(function(j){
@@ -485,7 +492,7 @@ function hrStart(){
 function hrGroupObj(){ var gs = (state.hr && state.hr.groups) || []; return gs.filter(function(g){ return g.name === state.hrGroup; })[0] || null; }
 function hrTop(){
   return '<div class="top"><img src="logo.png" alt=""><div><b>Darslarim</b><small>HR paneli' + (state.hr && state.hr.name ? ' · ' + esc(state.hr.name) : '') + '</small></div>' +
-    '<a class="pill" style="margin-left:auto;text-decoration:none" href="?demo=1">Nomzod namunasi</a></div>' +
+    '<a class="pill" style="margin-left:auto;text-decoration:none" href="?demo=1" title="Nomzod ko\'radigan ko\'rinish (namuna)">👁 Nomzod</a>' + fsBtn() + '</div>' +
     (DEMO ? '<div class="demo">Namuna rejim: ma\'lumotlar haqiqiy emas</div>' : '');
 }
 function hrTabs(){
@@ -760,6 +767,24 @@ function demoHr(action, d){
   }, 300); });
 }
 
+/* ---------- To'liq ekran (Telegram 8.0+), tanlov eslab qolinadi ---------- */
+var FS_KEY = 'darslarim_toliq_ekran';
+function lsGet(k){ try { var v = localStorage.getItem(k); return v == null ? null : JSON.parse(v); } catch (e) { return null; } }
+function lsSet(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function canFs(){ try { return !!(TG && TG.isVersionAtLeast && TG.isVersionAtLeast('8.0') && TG.requestFullscreen); } catch (e) { return false; } }
+function isFs(){ return !!(TG && TG.isFullscreen); }
+var FS_IN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>';
+var FS_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"/></svg>';
+function fsLabel(){ return isFs() ? 'Kichraytirish (Esc)' : "To'liq ekran"; }
+function fsBtn(){ return canFs() ? '<button type="button" class="fsb" data-fs="1" title="' + fsLabel() + '" aria-label="' + fsLabel() + '">' + (isFs() ? FS_OUT : FS_IN) + '</button>' : ''; }
+function updateFsBtns(){ Array.prototype.forEach.call(document.querySelectorAll('[data-fs]'), function(b){ b.innerHTML = isFs() ? FS_OUT : FS_IN; b.title = fsLabel(); b.setAttribute('aria-label', fsLabel()); }); }
+function toggleFs(){
+  if (!canFs()) return;
+  try { if (isFs()) { TG.exitFullscreen(); lsSet(FS_KEY, false); } else { TG.requestFullscreen(); lsSet(FS_KEY, true); } } catch (e) {}
+}
+document.addEventListener('click', function(e){ if (e.target.closest('[data-fs]')) toggleFs(); });
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && isFs()) { e.preventDefault(); toggleFs(); } });
+
 /* ---------- Ishga tushirish ---------- */
 function start(){
   app.innerHTML = '<div class="splash"><img src="logo.png" alt="Doctor Ali"><div class="spin"></div></div>'; tabsEl.hidden = true;
@@ -780,6 +805,8 @@ if (TG) {
     TG.setHeaderColor && TG.setHeaderColor('#0a1326'); TG.setBackgroundColor && TG.setBackgroundColor('#0a1326');
     TG.setBottomBarColor && TG.setBottomBarColor('#0a1326');
     TG.disableVerticalSwipes && TG.disableVerticalSwipes();
+    if (canFs() && lsGet(FS_KEY) !== false && !TG.isFullscreen) TG.requestFullscreen();
+    TG.onEvent && TG.onEvent('fullscreenChanged', updateFsBtns);
     TG.BackButton.onClick(function(){ if (state.viewer) closeViewer(); else if (state.sheet) { state.sheet = null; render(); } });
   } catch (e) {}
 }
