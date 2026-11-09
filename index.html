@@ -201,6 +201,19 @@ function lsSet(k,v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e
 function lsDel(k){ try { localStorage.removeItem(k); } catch(e){} }
 function ssGet(k){ try { return sessionStorage.getItem(k); } catch(e){ return null; } }
 function ssSet(k,v){ try { sessionStorage.setItem(k,v); } catch(e){} }
+/* Tezlik uchun kesh: oxirgi ko'rilgan ma'lumot darhol ko'rsatiladi, yangisi orqada yuklanadi */
+var CACHE_KEY = 'nomzod_kesh_v1', CACHE_MAX_CARDS = 60, cacheObj = null;
+function cache(){ if (!cacheObj) { cacheObj = lsGet(CACHE_KEY); if (!cacheObj || typeof cacheObj !== 'object') cacheObj = { recent:{}, cards:{}, order:[] }; } return cacheObj; }
+var cacheTimer = null;
+function cacheSave(){ clearTimeout(cacheTimer); cacheTimer = setTimeout(function(){ if (DEMO) return; lsSet(CACHE_KEY, cacheObj); }, 300); }
+function cachePut(k, v){ cache()[k] = v; cacheSave(); }
+function cacheCard(id, data, meta){
+  var c = cache(); c.cards[id] = { data: data, meta: meta };
+  c.order = c.order.filter(function(x){ return x !== id; }); c.order.push(id);
+  while (c.order.length > CACHE_MAX_CARDS) delete c.cards[c.order.shift()];
+  cacheSave();
+}
+function cacheClear(){ cacheObj = { recent:{}, cards:{}, order:[] }; lsDel(CACHE_KEY); }
 
 function emptyAnketa(){
   return { clientId: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,8),
@@ -548,7 +561,7 @@ function submit(){
     return api('updateAnketa', { id: eid, data: payload }).then(function(j){
       state.submitting = false;
       state.flash = { cls:'ok', text: "O'zgarishlar saqlandi." + (j.decisionLocked ? ' Qaror o\'zgarmadi, chunki nomzod allaqachon o\'qishda.' : '') };
-      state.d = null; state.editId = null; openCand(eid, true);
+      state.d = null; state.editId = null; openCand(eid, true, true);
       try { TG && TG.HapticFeedback && TG.HapticFeedback.notificationOccurred('success'); } catch(e){}
     }).catch(function(e){
       state.submitting = false; state.submitError = e && e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : (e.message || 'Xatolik.'); render();
@@ -571,11 +584,17 @@ function checkPhone(){
     .catch(function(){ if (my === phoneSeq) { state.phoneMatches = 'error'; updatePhoneBox(); } });
 }
 function updatePhoneBox(){ var el = document.getElementById('phone-check'); if (el) el.innerHTML = phoneCheckHtml(); }
+function applyRecent(f, j){
+  state.recent = j.items || []; if (j.counts) state.counts = j.counts;
+  var r = cache().recent || {}; r[f] = { items: state.recent, counts: state.counts }; cachePut('recent', r);
+}
+function showCachedRecent(f){ var hit = (cache().recent || {})[f]; if (!hit) return false; state.recent = hit.items || []; if (hit.counts) state.counts = hit.counts; return true; }
 function loadRecent(){
-  state.recentLoading = true; if (!updateCandList()) render();
+  var f = state.filter || 'all';
+  state.recentLoading = !showCachedRecent(f); if (!updateCandList()) render();
   var my = state.recentSeq = (state.recentSeq || 0) + 1;
-  api('recent', { filter: state.filter || 'all' }).then(function(j){ if (my !== state.recentSeq) return; state.recent = j.items || []; if (j.counts) state.counts = j.counts; })
-    .catch(function(){ if (my === state.recentSeq) state.recent = []; })
+  api('recent', { filter: f }).then(function(j){ if (my !== state.recentSeq) return; applyRecent(f, j); })
+    .catch(function(){ if (my === state.recentSeq && state.recentLoading) state.recent = []; })
     .then(function(){ if (my !== state.recentSeq) return; state.recentLoading = false; if (state.screen === 'home') { if (!updateCandList()) render(); } });
 }
 function readMonth(prefix){ var m = document.getElementById(prefix + '-m'), y = document.getElementById(prefix + '-y'); return m && y && m.value && y.value ? y.value + '-' + m.value : ''; }
@@ -670,9 +689,10 @@ function groupPills(g){
   return out;
 }
 function loadGroups(){
-  state.groupsLoading = true; render();
-  api('groups').then(function(j){ state.groups = j.items || []; }).catch(function(e){ state.groups = []; toastErr(e); })
-    .then(function(){ state.groupsLoading = false; if (state.screen === 'home') render(); });
+  var hit = cache().groups; if (hit) state.groups = hit;
+  state.groupsLoading = !hit; render();
+  api('groups').then(function(j){ state.groups = j.items || []; cachePut('groups', state.groups); }).catch(function(e){ if (!hit) state.groups = []; toastErr(e); })
+    .then(function(){ state.groupsLoading = false; if (state.screen === 'home' && state.tab === 'guruh') { var y = window.scrollY; render(); window.scrollTo(0, y); } });
 }
 function goGroups(){ state.tab = 'guruh'; state.screen = 'home'; render(); loadGroups(); scrollTop(); }
 function toastErr(e){ state.flash = { cls:'bad', text: (e && e.message === 'Failed to fetch') ? "Internet aloqasi yo'q." : (e && e.message || 'Xatolik') }; }
@@ -789,13 +809,30 @@ document.addEventListener('change', function(e){
 
 
 /* ================= Nomzod kartasi ================= */
-function openCand(id, keepFlash){
+var candInflight = {};
+function fetchCand(id){
+  var f = candInflight[id];
+  if (f && Date.now() - f.t < 15000) return f.p;
+  var p = api('getCandidate', { id: id }).then(function(j){ cacheCard(id, j.data, j.meta); return j; });
+  p.catch(function(){ delete candInflight[id]; });
+  candInflight[id] = { p: p, t: Date.now() };
+  return p;
+}
+function prefetchCand(id){ if (!DEMO && id) fetchCand(id).catch(function(){}); }
+function openCand(id, keepFlash, fresh){
   if (!keepFlash) state.flash = null;
   state.sheet = null;
-  state.cand = { id: id, loading: true, data: null, meta: null, error: '' }; state.screen = 'cand'; render(); scrollTop();
-  api('getCandidate', { id: id }).then(function(j){ state.cand.loading = false; state.cand.data = j.data; state.cand.meta = j.meta; render(); })
-    .catch(function(e){ state.cand.loading = false; state.cand.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; render(); });
+  if (fresh) delete candInflight[id];
+  var hit = cache().cards[id];
+  var same = state.screen === 'cand' && state.cand && state.cand.id === id && state.cand.data;
+  state.cand = { id: id, loading: !hit, stale: !!hit, data: hit ? hit.data : null, meta: hit ? hit.meta : null, error: '' };
+  state.screen = 'cand'; if (same) keepScroll(); else { render(); scrollTop(); }
+  var my = state.cand;
+  fetchCand(id).then(function(j){ if (state.cand !== my) return; my.loading = false; my.stale = false; my.data = j.data; my.meta = j.meta; if (state.screen === 'cand') keepScroll(); })
+    .catch(function(e){ if (state.cand !== my) return; my.loading = false; if (!my.data) my.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; else { my.stale = false; toastErr(e); } if (state.screen === 'cand') keepScroll(); });
 }
+/* Barmoq tekkanda kartochkani oldindan yuklaymiz */
+document.addEventListener('pointerdown', function(e){ var it = e.target.closest && e.target.closest('[data-cand]'); if (it) prefetchCand(it.dataset.cand); }, { passive: true });
 function candHtml(){
   var c = state.cand, html = '<header class="top"><div class="top-row"><div style="min-width:0"><div class="sub">' + esc(c.id) + '</div><h1>' + esc(c.data ? c.data.fio : 'Nomzod') + '</h1></div></div></header><main>';
   html += flashHtml();
@@ -808,7 +845,7 @@ function candHtml(){
   html += contactCardHtml(m) + trainingCardHtml(m);
   var d = Object.assign(emptyAnketa(), c.data);
   html += '<div class="card">' + summaryHtml(d) + '</div>';
-  return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit">Tahrirlash</button></footer>' + sheetHtml();
+  return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit"' + (c.stale ? ' disabled' : '') + '>' + (c.stale ? 'Yangilanmoqda…' : 'Tahrirlash') + '</button></footer>' + sheetHtml();
 }
 /* ---- Xabar berish (qo'ng'iroq/SMS) va o'qish belgilari ---- */
 var RES_LIST = ['Keladi','Javob bermadi',"Raqam o'chiq",'Rad etdi'];
@@ -876,13 +913,22 @@ function saveSheet(){
     call = api('setNoShow', { id: c.id, sabab: sh.sabab + (sh.izoh ? ': ' + sh.izoh : '') });
     okText = 'Nomzod "O\'qishga kelmadi" deb belgilandi.';
   }
+  if (sh.type === 'contact') {
+    // Darhol ekranda ko'rsatamiz, server javobini kutmaymiz
+    var m = c.meta, d = new Date(), p2 = function(n){ return ('0' + n).slice(-2); };
+    m.aloqa = (m.aloqa || []).concat([{ sana: p2(d.getDate()) + '.' + p2(d.getMonth()+1) + '.' + d.getFullYear() + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()), usul: sh.usul, natija: sh.natija, oqish: fmtDate(sh.oqish), izoh: sh.izoh, hr: 'saqlanmoqda…' }]);
+    state.sheet = null; state.flash = { cls:'ok', text: esc(okText) }; keepScroll();
+    call.then(function(){ if (state.cand === c) openCand(c.id, true, true); })
+      .catch(function(e){ if (state.cand !== c) return; state.flash = { cls:'bad', text: 'Saqlanmadi: ' + esc(e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message) }; openCand(c.id, true, true); });
+    return;
+  }
   sh.saving = true; sh.error = ''; keepScroll();
-  call.then(function(j){ state.sheet = null; state.flash = { cls: j.holat === ST.NOSHOW ? 'warn' : 'ok', text: esc(okText) }; openCand(c.id, true); })
+  call.then(function(j){ state.sheet = null; state.flash = { cls: j.holat === ST.NOSHOW ? 'warn' : 'ok', text: esc(okText) }; openCand(c.id, true, true); })
     .catch(function(e){ sh.saving = false; sh.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; keepScroll(); });
 }
 function undoNoShow(){
   var c = state.cand;
-  api('setNoShow', { id: c.id, undo: true }).then(function(j){ state.flash = { cls:'ok', text: 'Nomzod qayta taklif qilindi: holati "' + esc(j.holat) + '".' }; openCand(c.id, true); })
+  api('setNoShow', { id: c.id, undo: true }).then(function(j){ state.flash = { cls:'ok', text: 'Nomzod qayta taklif qilindi: holati "' + esc(j.holat) + '".' }; openCand(c.id, true, true); })
     .catch(function(e){ toastErr(e); render(); });
 }
 document.addEventListener('click', function(e){
@@ -936,13 +982,29 @@ function applyTheme(){
 }
 function afterAuth(j){
   state.user = j.user; state.config = j.config || state.config;
-  var dr = lsGet(DRAFT_KEY); goHome();
+  goHome();
+}
+/* Ilova ochilishi: keshdagi ma'lumot bilan darhol ochiladi, config + ro'yxat bitta so'rovda yangilanadi */
+function startSession(onFail, noFast){
+  var cfg = cache().cfg, f = state.filter || 'all', fast = !!cfg && !DEMO && !noFast;
+  if (fast) { state.user = cfg.user; state.config = cfg.config || state.config; state.screen = 'home'; state.recentLoading = !showCachedRecent(f); render(); }
+  var my = state.recentSeq = (state.recentSeq || 0) + 1;
+  return api('config', { recent: f }).then(function(j){
+    state.user = j.user; state.config = j.config || state.config; cachePut('cfg', { user: j.user, config: j.config });
+    if (j.recent && my === state.recentSeq) { applyRecent(f, j.recent); state.recentLoading = false; if (state.screen === 'home') { if (!updateCandList()) render(); } }
+    if (!fast) { state.screen = 'home'; render(); if (!j.recent) loadRecent(); }
+    return j;
+  }).catch(function(e){
+    if (fast && e.message === 'Failed to fetch') { state.recentLoading = false; toastErr(e); render(); return; }
+    if (e.code === 'auth' || e.code === 'forbidden') cacheClear();
+    onFail(e);
+  });
 }
 function pinLogin(){
   var v = (document.getElementById('pin') || {}).value || ''; if (!v) { state.pinError = 'PIN kiriting'; render(); return; }
   state.auth = { pin: v };
-  api('config').then(function(j){ ssSet('nomzod_pin', v); state.pinError = ''; afterAuth(j); })
-    .catch(function(e){ state.auth = null; state.pinError = e.message || "PIN noto'g'ri"; render(); });
+  startSession(function(e){ state.auth = null; state.screen = 'pin'; state.pinError = e.message || "PIN noto'g'ri"; render(); }, true)
+    .then(function(j){ if (j) { ssSet('nomzod_pin', v); state.pinError = ''; } });
 }
 /* To'liq ekran: Telegram 8.0+. Tanlov eslab qolinadi. */
 var FS_KEY = 'nomzod_toliq_ekran';
@@ -971,10 +1033,10 @@ function boot(){
   if (DEMO) { state.auth = { demo:true }; return api('config').then(afterAuth); }
   if (IN_TG) {
     state.auth = { initData: TG.initData };
-    return api('config').then(afterAuth).catch(function(e){ state.fatal = e.message || 'Server bilan aloqa yo\'q'; state.screen = 'fatal'; render(); });
+    return startSession(function(e){ state.fatal = e.message || 'Server bilan aloqa yo\'q'; state.screen = 'fatal'; render(); });
   }
   var saved = ssGet('nomzod_pin');
-  if (saved) { state.auth = { pin: saved }; return api('config').then(afterAuth).catch(function(){ state.auth = null; state.screen = 'pin'; render(); }); }
+  if (saved) { state.auth = { pin: saved }; return startSession(function(){ state.auth = null; state.screen = 'pin'; render(); }); }
   state.screen = 'pin'; render();
 }
 boot();
