@@ -22,12 +22,14 @@ var SHEETS = {
   SOZLAMALAR: 'Sozlamalar',
   QOLLANMALAR: "Qo'llanmalar",
   YUBORISHLAR: 'Yuborishlar',
-  SAVOLLAR: 'Savollar'
+  SAVOLLAR: 'Savollar',
+  ALOQA: 'Aloqa'
 };
 
 var HEADERS = {
   Nomzodlar: ['ID', 'Suhbat sanasi', "F.I.Sh.", 'Telefon', "Tug'ilgan sana", 'Yosh', 'Vakansiya',
-    "E'lon manbai", 'Holat', 'Guruh', 'Qoldirgan kunlar', 'Imtihon balli', 'HR', 'Yangilangan', 'Telegram ID'],
+    "E'lon manbai", 'Holat', 'Guruh', 'Qoldirgan kunlar', 'Imtihon balli', 'HR', 'Yangilangan', 'Telegram ID',
+    'Oxirgi aloqa', 'Aloqa usuli', 'Aloqa natijasi', "O'qish kuni", 'Boshlagan sana', 'Kelmaslik sababi'],
   Anketa: ['ID', 'Suhbat sanasi', "F.I.Sh.", "Tug'ilgan sana", 'Yosh', 'Telefon', 'Millati', 'Oilaviy holati',
     'Viloyat', 'Shahar / tuman', 'Mahalla', "Ko'cha", 'Uy',
     "Ma'lumoti", "OTM nomi", 'Fakultet', 'Kurs',
@@ -44,7 +46,8 @@ var HEADERS = {
   Sozlamalar: ['Kalit', 'Qiymat', 'Izoh'],
   "Qo'llanmalar": ['Kun', 'Tartib', 'Nomi', 'Turi', 'Fayl ID', 'Faol', "Qo'shilgan"],
   Yuborishlar: ['Sana', 'Guruh', 'Kun', 'Nomzod ID', "F.I.Sh.", 'Holat', "O'qidi", 'Ochilgan'],
-  Savollar: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Guruh', 'Savol', 'Javob', 'Javob sanasi']
+  Savollar: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Guruh', 'Savol', 'Javob', 'Javob sanasi'],
+  Aloqa: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Usul', 'Natija', "O'qish kuni", 'Izoh', 'HR']
 };
 
 var DEFAULT_SETTINGS = [
@@ -62,7 +65,8 @@ var STATUS = {
   RESERVE: 'Zaxirada',
   REJECTED: 'Rad etildi',
   STUDYING: "O'qishda",
-  EXPELLED: 'Chetlatildi'
+  EXPELLED: 'Chetlatildi',
+  NOSHOW: "O'qishga kelmadi"
 };
 var ATT = { PRESENT: 'Keldi', LATE: 'Kechikdi', ABSENT: 'Kelmadi' };
 var TRAINING_DAYS = 5;
@@ -127,14 +131,16 @@ function doPost(e) {
       case 'config': return json_({ ok: true, user: user, config: getConfig_() });
       case 'checkPhone': return json_({ ok: true, matches: findByPhone_(data.phone) });
       case 'submitAnketa': return json_(submitAnketa_(data, user));
-      case 'recent': return json_({ ok: true, items: recent_(20) });
+      case 'recent': ensureSchema_(); return json_(recent_(data.filter));
+      case 'addContact': return json_(addContact_(data, user));
+      case 'setNoShow': return json_(setNoShow_(data, user));
       case 'groupCandidates': return json_({ ok: true, items: groupCandidates_() });
       case 'createGroup': return json_(createGroup_(data));
       case 'addToGroup': return json_(addToGroup_(data));
-      case 'groups': return json_({ ok: true, items: listGroups_() });
+      case 'groups': ensureSchema_(); return json_({ ok: true, items: listGroups_() });
       case 'getDay': return json_(getDay_(data));
-      case 'saveDay': return json_(saveDay_(data));
-      case 'getCandidate': return json_(getCandidate_(data));
+      case 'saveDay': ensureSchema_(); return json_(saveDay_(data));
+      case 'getCandidate': ensureSchema_(); return json_(getCandidate_(data));
       case 'updateAnketa': return json_(updateAnketa_(data, user));
       case 'search': return json_({ ok: true, items: search_(data.q) });
       default: return json_({ ok: false, error: "Noma'lum amal" });
@@ -435,15 +441,33 @@ function appendObj_(sh, defaultHeaders, obj) {
   sh.appendRow(row);
 }
 
-function recent_(limit) {
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.NOMZODLAR);
-  var last = sh.getLastRow();
-  if (last < 2) return [];
-  var start = Math.max(2, last - limit + 1);
-  var rows = sh.getRange(start, 1, last - start + 1, HEADERS.Nomzodlar.length).getValues();
-  return rows.reverse().map(function (r) {
-    return { id: r[0], date: fmtDate_(r[1]), name: r[2], phone: r[3], vakansiya: r[6], holat: r[8] };
-  });
+var FILTERS = ['all', 'noContact', 'waiting', 'studying', 'noshow'];
+
+/** Ro'yxat qatori: holat + aloqa/boshlash belgilari uchun qisqa ma'lumot */
+function listItem_(r) {
+  return {
+    id: r['ID'], date: fmtDate_(r['Suhbat sanasi']), name: r["F.I.Sh."], phone: r['Telefon'], vakansiya: r['Vakansiya'], holat: r['Holat'],
+    guruh: r['Guruh'] || '', aloqa: r['Oxirgi aloqa'] ? shortDate_(r['Oxirgi aloqa']) : '', usul: r['Aloqa usuli'] || '',
+    natija: r['Aloqa natijasi'] || '', boshlagan: r['Boshlagan sana'] ? shortDate_(r['Boshlagan sana']) : ''
+  };
+}
+
+/** Qaysi filtrga tushadi */
+function filterOf_(r) {
+  var h = r['Holat'];
+  if (h === STATUS.NOSHOW) return 'noshow';
+  if (h === STATUS.NEW) return r['Aloqa natijasi'] === CONTACT_RES.YES ? 'waiting' : 'noContact';
+  if (h === STATUS.STUDYING) return r['Boshlagan sana'] ? 'studying' : 'waiting';
+  return '';
+}
+
+function recent_(filter) {
+  filter = FILTERS.indexOf(filter) > -1 ? filter : 'all';
+  var rows = table_(SHEETS.NOMZODLAR).rows.filter(function (r) { return r['ID'] !== ''; });
+  var counts = { noContact: 0, waiting: 0, studying: 0, noshow: 0 };
+  rows.forEach(function (r) { var f = filterOf_(r); if (f) counts[f]++; });
+  var picked = filter === 'all' ? rows.slice(-20) : rows.filter(function (r) { return filterOf_(r) === filter; }).slice(-100);
+  return { ok: true, filter: filter, counts: counts, items: picked.reverse().map(listItem_) };
 }
 
 
@@ -562,6 +586,9 @@ function listGroups_() {
       total: mine.length,
       studying: mine.filter(function (m) { return m['Holat'] === STATUS.STUDYING; }).length,
       expelled: mine.filter(function (m) { return m['Holat'] === STATUS.EXPELLED; }).length,
+      started: mine.filter(function (m) { return m['Holat'] === STATUS.STUDYING && m['Boshlagan sana']; }).length,
+      notStarted: mine.filter(function (m) { return m['Holat'] === STATUS.STUDYING && !m['Boshlagan sana']; }).length,
+      noshow: mine.filter(function (m) { return m['Holat'] === STATUS.NOSHOW; }).length,
       daysDone: Object.keys(days).map(Number).sort()
     };
   }).reverse();
@@ -580,7 +607,7 @@ function getDay_(d) {
       var mineAll = att.filter(function (a) { return String(a['Nomzod ID']) === id; });
       var today = mineAll.filter(function (a) { return Number(a['Kun']) === day; })[0];
       return {
-        id: id, name: m["F.I.Sh."], status: m['Holat'],
+        id: id, name: m["F.I.Sh."], status: m['Holat'], started: !!m['Boshlagan sana'],
         absences: mineAll.filter(function (a) { return a['Holat'] === ATT.ABSENT && Number(a['Kun']) !== day; }).length,
         entry: today ? { holat: today['Holat'], baho: today['Baho (1-5)'], izoh: today['Izoh'] } : null
       };
@@ -597,7 +624,7 @@ function saveDay_(d) {
   });
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  var warned = [], expelled = [], restored = [];
+  var warned = [], expelled = [], restored = [], noshow = [];
   try {
     var n = table_(SHEETS.NOMZODLAR);
     var members = {};
@@ -623,18 +650,32 @@ function saveDay_(d) {
       }
     });
     var limit = threshold_();
+    var gr = groupRow_(group);
+    var TRACKED = [STATUS.STUDYING, STATUS.EXPELLED, STATUS.NOSHOW];
     Object.keys(members).forEach(function (id) {
       var m = members[id];
       var before = Number(m['Qoldirgan kunlar']) || 0;
       var count = att.rows.filter(function (a) { return String(a['Guruh']) === group && String(a['Nomzod ID']) === id && a['Holat'] === ATT.ABSENT; }).length;
       if (count !== before) setCell_(n, m._row, 'Qoldirgan kunlar', count);
-      if (count >= limit && m['Holat'] === STATUS.STUDYING) {
-        setCell_(n, m._row, 'Holat', STATUS.EXPELLED); setCell_(n, m._row, 'Yangilangan', now);
-        expelled.push(m["F.I.Sh."]);
-      } else if (count < limit && m['Holat'] === STATUS.EXPELLED) {
-        setCell_(n, m._row, 'Holat', STATUS.STUDYING); setCell_(n, m._row, 'Yangilangan', now);
-        restored.push(m["F.I.Sh."]);
-      } else if (count > before && count < limit) {
+      // Boshlagan sana: birinchi "Keldi"/"Kechikdi" kuni
+      var first = firstPresent_(att.rows, group, id);
+      var startDate = first ? dayDate_(gr && gr['Boshlanish sanasi'], first) : '';
+      var oldStart = m['Boshlagan sana'] instanceof Date ? m['Boshlagan sana'].getTime() : String(m['Boshlagan sana'] || '');
+      if ((startDate instanceof Date ? startDate.getTime() : '') !== oldStart) setCell_(n, m._row, 'Boshlagan sana', startDate);
+      var cur = m['Holat'];
+      if (TRACKED.indexOf(cur) === -1) return;
+      var target = cur;
+      if (first) target = count >= limit ? STATUS.EXPELLED : STATUS.STUDYING;   // o'qishni boshlagan
+      else if (count >= limit) target = STATUS.NOSHOW;                            // bir kun ham kelmagan
+      else if (cur === STATUS.EXPELLED) target = STATUS.STUDYING;
+      if (target !== cur) {
+        setCell_(n, m._row, 'Holat', target); setCell_(n, m._row, 'Yangilangan', now);
+        if (target === STATUS.NOSHOW) setCell_(n, m._row, 'Kelmaslik sababi', count + ' kun darsga kelmadi');
+        else if (cur === STATUS.NOSHOW) setCell_(n, m._row, 'Kelmaslik sababi', '');
+        if (target === STATUS.EXPELLED) expelled.push(m["F.I.Sh."]);
+        else if (target === STATUS.NOSHOW) noshow.push(m["F.I.Sh."]);
+        else restored.push(m["F.I.Sh."]);
+      } else if (target === STATUS.STUDYING && count > before && count < limit) {
         warned.push(m["F.I.Sh."]);
       }
     });
@@ -644,8 +685,9 @@ function saveDay_(d) {
   var lines = [];
   if (warned.length) lines.push('⚠️ Guruh ' + group + ', ' + day + '-kun: dars qoldirdi (yana bir marta qoldirsa chetlatiladi):\n• ' + warned.join('\n• '));
   if (expelled.length) lines.push('⛔ Guruh ' + group + ', ' + day + '-kun: chetlatildi (' + limit + ' kun qoldirdi):\n• ' + expelled.join('\n• '));
+  if (noshow.length) lines.push('🚫 Guruh ' + group + ', ' + day + '-kun: o\'qishga kelmadi (bir kun ham kelmadi):\n• ' + noshow.join('\n• '));
   if (lines.length) notify_(lines.join('\n\n'));
-  return { ok: true, warned: warned, expelled: expelled, restored: restored };
+  return { ok: true, warned: warned, expelled: expelled, restored: restored, noshow: noshow };
 }
 
 /** HR'ga bot orqali xabar yuboradi. HR botga kamida bir marta /start yozgan bo'lishi kerak. */
@@ -719,7 +761,10 @@ function getCandidate_(d) {
     ok: true, id: id, data: out,
     meta: { holat: n['Holat'], guruh: n['Guruh'] || '', qoldirgan: n['Qoldirgan kunlar'], imtihon: n['Imtihon balli'],
       suhbat: fmtDate_(n['Suhbat sanasi']), yangilangan: fmtDate_(n['Yangilangan']), hr: n['HR'],
-      canChangeDecision: PRE_GROUP.indexOf(n['Holat']) > -1 }
+      canChangeDecision: PRE_GROUP.indexOf(n['Holat']) > -1,
+      aloqa: contactsOf_(id), oqishKuni: n["O'qish kuni"] ? fmtDate_(n["O'qish kuni"]) : '',
+      boshlagan: n['Boshlagan sana'] ? fmtDate_(n['Boshlagan sana']) : '', sabab: n['Kelmaslik sababi'] || '',
+      natija: n['Aloqa natijasi'] || '' }
   };
 }
 
@@ -802,8 +847,134 @@ function search_(q) {
     var id = String(r['ID'] || '').toLowerCase();
     var ph = String(r['Telefon'] || '').replace(/\D/g, '');
     return name.indexOf(q) > -1 || id.indexOf(q) > -1 || (digits.length >= 3 && ph.indexOf(digits) > -1);
-  }).reverse().slice(0, 30).map(function (r) {
-    return { id: r['ID'], date: fmtDate_(r['Suhbat sanasi']), name: r["F.I.Sh."], phone: r['Telefon'], vakansiya: r['Vakansiya'], holat: r['Holat'] };
+  }).reverse().slice(0, 30).map(listItem_);
+}
+
+
+// ---------------------------------------------------------------------------
+// Nomzodga xabar berish (qo'ng'iroq/SMS) va o'qishni boshlagan/kelmaganini belgilash
+// ---------------------------------------------------------------------------
+var CONTACT_WAYS = ["Qo'ng'iroq", 'SMS', 'Telegram'];
+var CONTACT_RES = { YES: 'Keladi', NOANSWER: 'Javob bermadi', OFF: "Raqam o'chiq", NO: 'Rad etdi' };
+var SCHEMA_VERSION = '2';
+
+/**
+ * Yangi ustun va "Aloqa" varag'ini avtomatik qo'shadi (setup'ni qayta ishga tushirish shart emas).
+ * Birinchi marta ishlaganda mavjud guruhlar uchun "Boshlagan sana" ni davomatdan to'ldiradi va
+ * bir kun ham kelmay chetlatilganlarni "O'qishga kelmadi" holatiga o'tkazadi.
+ */
+function ensureSchema_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
+  withLock_(function () {
+    if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION) return;
+    ensureSheet_(SHEETS.ALOQA);
+    ['Telegram ID', 'Oxirgi aloqa', 'Aloqa usuli', 'Aloqa natijasi', "O'qish kuni", 'Boshlagan sana', 'Kelmaslik sababi']
+      .forEach(function (h) { ensureColumn_(SHEETS.NOMZODLAR, h); });
+    var n = table_(SHEETS.NOMZODLAR), att = table_(SHEETS.DAVOMAT).rows;
+    var starts = {};
+    table_(SHEETS.GURUHLAR).rows.forEach(function (g) { starts[String(g['Guruh'])] = g['Boshlanish sanasi']; });
+    n.rows.forEach(function (m) {
+      if (!m['Guruh']) return;
+      var first = firstPresent_(att, m['Guruh'], m['ID']);
+      if (first && !m['Boshlagan sana']) setCell_(n, m._row, 'Boshlagan sana', dayDate_(starts[String(m['Guruh'])], first));
+      if (!first && m['Holat'] === STATUS.EXPELLED) setCell_(n, m._row, 'Holat', STATUS.NOSHOW);
+    });
+    props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
+  });
+}
+
+/** Nomzod guruhda birinchi kelgan (Keldi/Kechikdi) kun raqami, kelmagan bo'lsa 0 */
+function firstPresent_(attRows, group, id) {
+  var first = 0;
+  attRows.forEach(function (a) {
+    if (String(a['Guruh']) !== String(group) || String(a['Nomzod ID']) !== String(id)) return;
+    if (a['Holat'] !== ATT.PRESENT && a['Holat'] !== ATT.LATE) return;
+    var d = Number(a['Kun']); if (!first || d < first) first = d;
+  });
+  return first;
+}
+
+/** Guruh boshlangan sanadan N-kun sanasi */
+function dayDate_(start, day) {
+  var s = isoToDate_(isoDate_(start));
+  if (!s) return new Date();
+  s.setDate(s.getDate() + day - 1);
+  return s;
+}
+
+function contactsOf_(id) {
+  var sh = sheet_(SHEETS.ALOQA);
+  if (!sh) return [];
+  return table_(SHEETS.ALOQA).rows.filter(function (r) { return String(r['Nomzod ID']) === String(id); }).map(function (r) {
+    var t = r['Sana'];
+    return { sana: t instanceof Date ? Utilities.formatDate(t, Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm') : String(t || ''),
+      usul: r['Usul'], natija: r['Natija'], oqish: r["O'qish kuni"] ? fmtDate_(r["O'qish kuni"]) : '', izoh: r['Izoh'] || '', hr: r['HR'] || '' };
+  });
+}
+
+var CONTACT_ALLOWED = [STATUS.NEW, STATUS.NOSHOW];
+
+function addContact_(d, user) {
+  var id = String(d.id || '');
+  if (CONTACT_WAYS.indexOf(d.usul) === -1) throw userError_('Aloqa usulini tanlang', 'validation');
+  var resList = Object.keys(CONTACT_RES).map(function (k) { return CONTACT_RES[k]; });
+  if (resList.indexOf(d.natija) === -1) throw userError_('Natijani tanlang', 'validation');
+  ensureSchema_();
+  return withLock_(function () {
+    var n = table_(SHEETS.NOMZODLAR), m = findRow_(n, id);
+    if (!m) throw userError_('Nomzod topilmadi: ' + id, 'notfound');
+    if (CONTACT_ALLOWED.indexOf(m['Holat']) === -1 && !(m['Holat'] === STATUS.STUDYING && !m['Boshlagan sana'])) {
+      throw userError_('Bu nomzod holati "' + m['Holat'] + '", xabar berish kerak emas', 'validation');
+    }
+    var now = new Date();
+    var sana = isoToDate_(d.sana);
+    if (sana) sana.setHours(now.getHours(), now.getMinutes());
+    var when = sana || now;
+    var oqish = isoToDate_(d.oqish);
+    var row = {};
+    row['Sana'] = when; row['Nomzod ID'] = id; row["F.I.Sh."] = m["F.I.Sh."]; row['Usul'] = d.usul; row['Natija'] = d.natija;
+    row["O'qish kuni"] = oqish || ''; row['Izoh'] = String(d.izoh || '').slice(0, 500); row['HR'] = user && user.name || '';
+    appendObj_(sheet_(SHEETS.ALOQA), HEADERS.Aloqa, row);
+    setCell_(n, m._row, 'Oxirgi aloqa', when);
+    setCell_(n, m._row, 'Aloqa usuli', d.usul);
+    setCell_(n, m._row, 'Aloqa natijasi', d.natija);
+    if (oqish) setCell_(n, m._row, "O'qish kuni", oqish);
+    var holat = m['Holat'];
+    if (d.natija === CONTACT_RES.NO && holat !== STATUS.NOSHOW) {
+      holat = STATUS.NOSHOW;
+      setCell_(n, m._row, 'Kelmaslik sababi', 'Rad etdi' + (d.izoh ? ': ' + d.izoh : ''));
+    } else if (d.natija === CONTACT_RES.YES && holat === STATUS.NOSHOW) {
+      holat = m['Guruh'] ? STATUS.STUDYING : STATUS.NEW;   // qayta taklif qilindi
+      setCell_(n, m._row, 'Kelmaslik sababi', '');
+    }
+    if (holat !== m['Holat']) setCell_(n, m._row, 'Holat', holat);
+    setCell_(n, m._row, 'Yangilangan', now);
+    return { ok: true, holat: holat };
+  });
+}
+
+/** Qo'lda "O'qishga kelmadi" deb belgilash yoki bekor qilish (undo: true) */
+function setNoShow_(d, user) {
+  var id = String(d.id || '');
+  ensureSchema_();
+  return withLock_(function () {
+    var n = table_(SHEETS.NOMZODLAR), m = findRow_(n, id);
+    if (!m) throw userError_('Nomzod topilmadi: ' + id, 'notfound');
+    var now = new Date(), holat;
+    if (d.undo) {
+      if (m['Holat'] !== STATUS.NOSHOW) throw userError_('Nomzod "O\'qishga kelmadi" holatida emas', 'validation');
+      holat = m['Guruh'] ? STATUS.STUDYING : STATUS.NEW;
+      setCell_(n, m._row, 'Kelmaslik sababi', '');
+    } else {
+      var inGroupNotStarted = m['Holat'] === STATUS.STUDYING && !m['Boshlagan sana'];
+      if (m['Holat'] !== STATUS.NEW && !inGroupNotStarted) throw userError_('Faqat o\'qishni boshlamagan nomzodni belgilash mumkin', 'validation');
+      holat = STATUS.NOSHOW;
+      setCell_(n, m._row, 'Kelmaslik sababi', String(d.sabab || '').slice(0, 300));
+    }
+    setCell_(n, m._row, 'Holat', holat);
+    setCell_(n, m._row, 'Yangilangan', now);
+    return { ok: true, holat: holat };
   });
 }
 
@@ -1020,7 +1191,7 @@ function openedDays_(group) {
 
 function members_(group) {
   return table_(SHEETS.NOMZODLAR).rows.filter(function (m) {
-    return String(m['Guruh']) === String(group) && m['Holat'] !== STATUS.EXPELLED && m['Holat'] !== STATUS.REJECTED;
+    return String(m['Guruh']) === String(group) && m['Holat'] !== STATUS.EXPELLED && m['Holat'] !== STATUS.REJECTED && m['Holat'] !== STATUS.NOSHOW;
   });
 }
 
