@@ -67,6 +67,7 @@ main>.btn{flex:none}
 .job{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
 .job b{display:block}
 .job small{color:var(--muted);display:block}
+main a{color:var(--accent)}
 .link{background:none;border:none;color:var(--accent);font:inherit;font-weight:600;cursor:pointer;padding:4px}
 .link.bad{color:var(--bad)}
 .alert{border-radius:12px;padding:12px 14px;font-size:14.5px}
@@ -90,6 +91,25 @@ input[type=search]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 .pill.ok{background:var(--ok-soft);color:var(--ok)}
 .pill.warn{background:var(--warn-soft);color:var(--warn)}
 .pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.gray{background:var(--line);color:var(--muted)}
+.pill.o{background:transparent;border:1px solid currentColor;padding:2px 8px}
+.pills{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.filters .chip{min-height:34px;padding:5px 11px;font-size:13.5px}
+.filters .chip i{font-style:normal;opacity:.75;margin-left:4px}
+.lbl.up{text-transform:uppercase;letter-spacing:.05em;font-size:12px}
+.log{display:flex;gap:10px;align-items:flex-start;font-size:14.5px}
+.log .ic{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
+.log small{display:block;color:var(--muted);font-size:12.5px}
+.log .ic.ok{background:var(--ok-soft)}.log .ic.warn{background:var(--warn-soft)}.log .ic.bad{background:var(--bad-soft)}
+.btn.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
+.row2{display:flex;gap:8px}.row2>*{flex:1;min-width:0}
+.dim{position:fixed;inset:0;background:rgba(10,20,30,.45);z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;max-width:640px;margin:0 auto;background:var(--surface);border-radius:18px 18px 0 0;padding:16px 16px calc(16px + max(env(safe-area-inset-bottom,0px), var(--tg-safe-area-inset-bottom,0px)));display:flex;flex-direction:column;gap:12px;max-height:88vh;overflow:auto;box-shadow:0 -6px 24px rgba(0,0,0,.2)}
+.sheet h2{margin:0;font-size:18px}
+.sheet .seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
+.sheet .seg button[aria-pressed="true"][data-res="Keladi"]{background:var(--ok);border-color:var(--ok);color:#fff}
+.sheet .seg button[aria-pressed="true"][data-res="Rad etdi"]{background:var(--bad);border-color:var(--bad);color:#fff}
 .review{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:6px 12px;font-size:14.5px}
 .review dt{color:var(--muted)}
 .review dd{margin:0;overflow-wrap:anywhere}
@@ -208,7 +228,7 @@ function demoApi(action, data){
       vakansiyalar:['Operator','Sotuv menejeri','Kassir'], manbalar:['Telegram guruh','Tanish orqali','Instagram','Boshqa'],
       smenalar:['Kunduzgi','Kechki','Tungi',"Farqi yo'q"], millatlar:["O'zbek","Rus","Qozoq","Tojik","Qoraqalpoq","Boshqa"] } });
     else if (action === 'checkPhone') res({ ok:true, matches: demoDb.rows.filter(function(r){ return digits(r.phone) === digits(data.phone); }) });
-    else if (action === 'recent') res({ ok:true, items: demoDb.rows.slice().reverse() });
+    else if (action === 'recent') res({ ok:true, counts:{}, items: demoDb.rows.slice().reverse() });
     else if (action === 'groupCandidates') res({ ok:true, items: demoDb.rows.filter(function(r){ return /taklif/.test(r.holat) && !r.group; }).map(function(r){ return { id:r.id, name:r.name, vakansiya:r.vakansiya, date:r.date }; }) });
     else if (action === 'createGroup') { demoDb.g = (demoDb.g || 0) + 1; var gname = '#' + demoDb.g; var st = new Date(data.start); var ex = new Date(st.getTime() + 5*864e5);
       demoDb.rows.forEach(function(r){ if (data.ids.indexOf(r.id) > -1) { r.group = gname; r.holat = "O'qishda"; } });
@@ -254,7 +274,20 @@ function months(from, to){
 function expLabel(m){ if(!m) return "Tajriba yo'q"; var y = Math.floor(m/12), r = m % 12; return [y ? y + ' yil' : '', r ? r + ' oy' : ''].filter(Boolean).join(' '); }
 function money(s){ var d = String(s||'').replace(/\D/g,''); return d ? d.replace(/\B(?=(\d{3})+(?!\d))/g,' ') : ''; }
 function haptic(){ try { TG && TG.HapticFeedback && TG.HapticFeedback.selectionChanged(); } catch(e){} }
-function statusPill(h){ var c = /taklif/i.test(h) ? 'ok' : /zaxira/i.test(h) ? 'warn' : /rad/i.test(h) ? 'bad' : ''; return '<span class="pill ' + c + '">' + esc(h) + '</span>'; }
+var ST = { NEW: "O'qishga taklif qilindi", STUDYING: "O'qishda", EXPELLED: 'Chetlatildi', NOSHOW: "O'qishga kelmadi" };
+var WAY_IC = { "Qo'ng'iroq": '📞', SMS: '✉', Telegram: '✈' };
+function statusPill(h){ var c = /taklif/i.test(h) ? 'ok' : /zaxira/i.test(h) ? 'warn' : /rad|chetlat/i.test(h) ? 'bad' : /kelmadi/i.test(h) ? 'gray' : ''; return '<span class="pill ' + c + '">' + esc(h) + '</span>'; }
+/* Ro'yxatdagi ikkinchi belgi: xabar berilgani yoki o'qishni boshlagani */
+function extraPill(r){
+  if (r.holat === ST.NEW) {
+    if (!r.natija) return '<span class="pill warn">⚠ Xabar berilmagan</span>';
+    var ic = WAY_IC[r.usul] || '📞';
+    if (r.natija === 'Keladi') return '<span class="pill ok o">' + ic + ' ' + esc(r.usul) + ' · ' + esc(r.aloqa) + '</span>';
+    return '<span class="pill warn o">' + ic + ' ' + esc(r.natija) + ' · ' + esc(r.aloqa) + '</span>';
+  }
+  if (r.holat === ST.STUDYING) return r.boshlagan ? '<span class="pill ok o">✓ Boshladi ' + esc(r.boshlagan) + '</span>' : '<span class="pill warn">Hali kelmagan</span>';
+  return '';
+}
 
 /* ---------------- Steps ---------------- */
 var STEPS = [
@@ -453,7 +486,15 @@ function homeHtml(){
   html += '<div id="cand-list">' + candListHtml() + '</div>';
   return html + '</section></main>';
 }
-function itemHtml(r){ return '<div class="item" role="button" tabindex="0" data-cand="' + esc(r.id) + '"><div><div class="nm">' + esc(r.name) + '</div><small>' + esc(r.id) + ' · ' + esc(r.date) + (r.vakansiya ? ' · ' + esc(r.vakansiya) : '') + '</small></div>' + statusPill(r.holat) + '</div>'; }
+function itemHtml(r){ return '<div class="item" role="button" tabindex="0" data-cand="' + esc(r.id) + '"><div><div class="nm">' + esc(r.name) + '</div><small>' + esc(r.id) + ' · ' + esc(r.date) + (r.vakansiya ? ' · ' + esc(r.vakansiya) : '') + '</small></div><div class="pills">' + statusPill(r.holat) + extraPill(r) + '</div></div>'; }
+var FILTERS = [['all','Hammasi'],['noContact','Xabar berilmagan'],['waiting','Kelishini kutyapmiz'],['studying',"O'qishda"],['noshow','Kelmadi']];
+var FILTER_TITLE = { all: "So'nggi nomzodlar", noContact: "Xabar berilmagan: qo'ng'iroq yoki SMS kerak", waiting: 'Kelishini kutyapmiz', studying: "O'qishni boshlaganlar", noshow: "O'qishga kelmaganlar" };
+var FILTER_EMPTY = { noContact: "Hamma taklif qilingan nomzodlarga xabar berilgan.", waiting: "Kelishi kutilayotgan nomzod yo'q.", studying: "Hozir o'qiyotgan nomzod yo'q.", noshow: "O'qishga kelmagan nomzod yo'q." };
+function filtersHtml(){
+  var f = state.filter || 'all', c = state.counts || {};
+  return '<div class="filters" role="group" aria-label="Filtr">' + FILTERS.map(function(x){
+    return '<button type="button" class="chip" data-filter="' + x[0] + '" aria-pressed="' + (f === x[0]) + '">' + x[1] + (x[0] !== 'all' && c[x[0]] != null ? '<i>' + c[x[0]] + '</i>' : '') + '</button>'; }).join('') + '</div>';
+}
 function candListHtml(){
   var q = (state.searchQ || '').trim();
   if (q.length >= 2) {
@@ -461,9 +502,10 @@ function candListHtml(){
     var res = state.searchRes || [];
     return '<h2 style="font-size:17px">Qidiruv natijasi</h2>' + (res.length ? '<div class="card list">' + res.map(itemHtml).join('') + '</div>' : '<p class="hint">"' + esc(q) + '" bo\'yicha nomzod topilmadi.</p>');
   }
-  var html = '<h2 style="font-size:17px">So\'nggi nomzodlar</h2>';
+  var f = state.filter || 'all';
+  var html = filtersHtml() + '<h2 style="font-size:17px">' + esc(FILTER_TITLE[f]) + '</h2>';
   if (state.recentLoading) return html + '<div class="spinner"></div>';
-  if (!state.recent.length) return html + '<p class="hint">Hali nomzod kiritilmagan. "Yangi nomzod" tugmasini bosib birinchi anketani to\'ldiring.</p>';
+  if (!state.recent.length) return html + '<p class="hint">' + (f === 'all' ? 'Hali nomzod kiritilmagan. "Yangi nomzod" tugmasini bosib birinchi anketani to\'ldiring.' : esc(FILTER_EMPTY[f])) + '</p>';
   return html + '<div class="card list">' + state.recent.map(itemHtml).join('') + '</div>';
 }
 function formHtml(){
@@ -530,9 +572,11 @@ function checkPhone(){
 }
 function updatePhoneBox(){ var el = document.getElementById('phone-check'); if (el) el.innerHTML = phoneCheckHtml(); }
 function loadRecent(){
-  state.recentLoading = true; render();
-  api('recent').then(function(j){ state.recent = j.items || []; }).catch(function(){ state.recent = []; })
-    .then(function(){ state.recentLoading = false; if (state.screen === 'home') render(); });
+  state.recentLoading = true; if (!updateCandList()) render();
+  var my = state.recentSeq = (state.recentSeq || 0) + 1;
+  api('recent', { filter: state.filter || 'all' }).then(function(j){ if (my !== state.recentSeq) return; state.recent = j.items || []; if (j.counts) state.counts = j.counts; })
+    .catch(function(){ if (my === state.recentSeq) state.recent = []; })
+    .then(function(){ if (my !== state.recentSeq) return; state.recentLoading = false; if (state.screen === 'home') { if (!updateCandList()) render(); } });
 }
 function readMonth(prefix){ var m = document.getElementById(prefix + '-m'), y = document.getElementById(prefix + '-y'); return m && y && m.value && y.value ? y.value + '-' + m.value : ''; }
 function syncJob(){
@@ -612,11 +656,18 @@ function groupsHtml(){
   if (!gs.length) return html + '<p class="hint">Hali guruh yo\'q. Suhbatda "O\'qishga taklif qilindi" deb belgilangan nomzodlardan guruh tuzing.</p>';
   return html + gs.map(function(g){
     return '<div class="card"><div class="job"><div><b style="font-size:17px">Guruh ' + esc(g.group) + '</b><small>' + fmtIso(g.start) + ' dan boshlangan · imtihon ' + fmtIso(g.exam) + '</small></div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><span class="pill">' + g.studying + ' o\'qishda</span>' + (g.expelled ? '<span class="pill bad">' + g.expelled + ' chetlatildi</span>' : '') + '</div></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">' + groupPills(g) + '</div></div>' +
       '<button type="button" class="btn ghost" style="padding:8px 12px;font-size:14px;align-self:flex-start" data-addto="' + esc(g.group) + '">+ Nomzod qo\'shish</button>' +
       '<span class="lbl">Davomat kuni</span><div class="days">' + [1,2,3,4,5].map(function(d){ var done = g.daysDone.indexOf(d) > -1;
         return '<button type="button" class="' + (done ? 'done' : '') + '" data-day="' + d + '" data-group="' + esc(g.group) + '">' + (done ? '✓ ' : '') + d + '-kun</button>'; }).join('') + '</div></div>';
   }).join('');
+}
+function groupPills(g){
+  var started = g.started != null ? g.started : g.studying, out = '<span class="pill ok">' + started + ' boshladi</span>';
+  if (g.notStarted) out += '<span class="pill warn">' + g.notStarted + ' hali kelmagan</span>';
+  if (g.noshow) out += '<span class="pill gray">' + g.noshow + ' kelmadi</span>';
+  if (g.expelled) out += '<span class="pill bad">' + g.expelled + ' chetlatildi</span>';
+  return out;
 }
 function loadGroups(){
   state.groupsLoading = true; render();
@@ -676,12 +727,15 @@ function dayHtml(){
   if (!v.items.length) return html + '<p class="hint">Bu guruhda nomzod yo\'q.</p>' + (v.error ? '<div class="alert bad">' + esc(v.error) + '</div>' : '') + '</main>';
   html += '<button class="btn ghost small" id="all-present" style="align-self:flex-start">Hammasi keldi</button>';
   html += '<div class="card" style="gap:0;padding-block:2px">' + v.items.map(function(it){
-    var m = v.marks[it.id], total = it.absences + (m.holat === 'Kelmadi' ? 1 : 0), off = it.status === 'Chetlatildi' && total >= v.threshold;
+    var m = v.marks[it.id], total = it.absences + (m.holat === 'Kelmadi' ? 1 : 0), noshow = it.status === ST.NOSHOW && (!m.holat || m.holat === 'Kelmadi'), off = (it.status === 'Chetlatildi' && total >= v.threshold) || noshow;
+    var neverCame = !it.started && !noshow && it.status !== 'Chetlatildi';
     var warn = '';
-    if (m.holat === 'Kelmadi' && total >= v.threshold) warn = '<div class="alert bad" style="padding:8px 10px;font-size:13.5px">' + total + '-marta qoldirdi. Saqlanganda chetlatiladi.</div>';
+    if (noshow) warn = '';
+    else if (m.holat === 'Kelmadi' && total >= v.threshold && neverCame) warn = '<div class="alert bad" style="padding:8px 10px;font-size:13.5px">Bir kun ham kelmadi. Saqlanganda "O\'qishga kelmadi" bo\'ladi.</div>';
+    else if (m.holat === 'Kelmadi' && total >= v.threshold) warn = '<div class="alert bad" style="padding:8px 10px;font-size:13.5px">' + total + '-marta qoldirdi. Saqlanganda chetlatiladi.</div>';
     else if (m.holat === 'Kelmadi') warn = '<div class="alert warn" style="padding:8px 10px;font-size:13.5px">1-marta qoldirdi. Yana bir marta qoldirsa chetlatiladi.</div>';
     return '<div class="att' + (off ? ' off' : '') + '"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' +
-      (off ? '<span class="pill bad">Chetlatilgan</span>' : it.absences ? '<span class="pill warn">' + it.absences + ' kun qoldirgan</span>' : '') + '</div>' +
+      (noshow ? '<span class="pill gray">O\'qishga kelmadi</span>' : off ? '<span class="pill bad">Chetlatilgan</span>' : it.absences ? '<span class="pill warn">' + it.absences + ' kun qoldirgan</span>' : neverCame && v.day > 1 ? '<span class="pill warn">Hali kelmagan</span>' : '') + '</div>' +
       '<div class="seg" role="group" aria-label="Davomat">' + ['Keldi','Kechikdi','Kelmadi'].map(function(h){ return '<button type="button" data-att="' + esc(it.id) + '" data-v="' + h + '" aria-pressed="' + (m.holat === h) + '">' + h + '</button>'; }).join('') + '</div>' + warn +
       (m.holat && m.holat !== 'Kelmadi' ? '<div class="chips rate" role="group" aria-label="Bugungi o\'zlashtirish">' + ['1','2','3','4','5'].map(function(b){ return '<button type="button" class="chip" data-baho="' + esc(it.id) + '" data-v="' + b + '" aria-pressed="' + (m.baho === b) + '">' + b + '</button>'; }).join('') + '</div>' : '') +
       (v.open[it.id] || m.izoh ? '<input type="text" data-izoh="' + esc(it.id) + '" placeholder="Izoh" value="' + esc(m.izoh) + '">' : '<button type="button" class="link" style="align-self:flex-start;padding:0" data-izoh-open="' + esc(it.id) + '">+ Izoh</button>') +
@@ -692,16 +746,17 @@ function dayHtml(){
 }
 function saveDay(){
   var v = state.dayv;
-  var missing = v.items.filter(function(it){ return it.status !== 'Chetlatildi' && !v.marks[it.id].holat; });
+  var missing = v.items.filter(function(it){ return it.status !== 'Chetlatildi' && it.status !== ST.NOSHOW && !v.marks[it.id].holat; });
   if (missing.length) { v.error = 'Davomat belgilanmagan: ' + missing.map(function(x){ return x.name; }).join(', '); render(); var b = document.querySelector('.alert.bad'); b && b.scrollIntoView({ block:'center' }); return; }
   var entries = v.items.filter(function(it){ return v.marks[it.id].holat; }).map(function(it){ var m = v.marks[it.id]; return { id: it.id, holat: m.holat, baho: m.baho, izoh: m.izoh }; });
   v.saving = true; v.error = ''; render();
   api('saveDay', { group: v.group, day: v.day, entries: entries }).then(function(j){
     var parts = [v.day + '-kun davomati saqlandi.'];
     if (j.expelled && j.expelled.length) parts.push('Chetlatildi: <b>' + j.expelled.map(esc).join(', ') + '</b>.');
+    if (j.noshow && j.noshow.length) parts.push('O\'qishga kelmadi: <b>' + j.noshow.map(esc).join(', ') + '</b>.');
     if (j.warned && j.warned.length) parts.push('Ogohlantirish: ' + j.warned.map(esc).join(', ') + '.');
     if (j.restored && j.restored.length) parts.push("Qayta tiklandi: " + j.restored.map(esc).join(', ') + '.');
-    state.flash = { cls: j.expelled && j.expelled.length ? 'warn' : 'ok', text: parts.join(' ') }; goGroups();
+    state.flash = { cls: (j.expelled && j.expelled.length) || (j.noshow && j.noshow.length) ? 'warn' : 'ok', text: parts.join(' ') }; goGroups();
   }).catch(function(e){ v.saving = false; v.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q. Qayta urinib ko'ring." : e.message; render(); });
 }
 document.addEventListener('click', function(e){
@@ -716,7 +771,7 @@ document.addEventListener('click', function(e){
   if (t.dataset.day) return openDay(t.dataset.group, +t.dataset.day);
   var v = state.dayv; if (!v || state.screen !== 'day') return;
   if (t.dataset.att || t.id === 'all-present') v.error = '';
-  if (t.id === 'all-present') { v.items.forEach(function(it){ if (it.status !== 'Chetlatildi' && !v.marks[it.id].holat) v.marks[it.id].holat = 'Keldi'; }); haptic(); keepScroll(); return; }
+  if (t.id === 'all-present') { v.items.forEach(function(it){ if (it.status !== 'Chetlatildi' && it.status !== ST.NOSHOW && !v.marks[it.id].holat) v.marks[it.id].holat = 'Keldi'; }); haptic(); keepScroll(); return; }
   if (t.dataset.att) { var m = v.marks[t.dataset.att]; m.holat = m.holat === t.dataset.v ? '' : t.dataset.v; if (m.holat === 'Kelmadi') m.baho = ''; haptic(); keepScroll(); return; }
   if (t.dataset.baho) { var mb = v.marks[t.dataset.baho]; mb.baho = mb.baho === t.dataset.v ? '' : t.dataset.v; haptic(); keepScroll(); return; }
   if (t.dataset.izohOpen) { v.open[t.dataset.izohOpen] = true; keepScroll(); var x = document.querySelector('[data-izoh="' + t.dataset.izohOpen + '"]'); x && x.focus(); return; }
@@ -736,6 +791,7 @@ document.addEventListener('change', function(e){
 /* ================= Nomzod kartasi ================= */
 function openCand(id, keepFlash){
   if (!keepFlash) state.flash = null;
+  state.sheet = null;
   state.cand = { id: id, loading: true, data: null, meta: null, error: '' }; state.screen = 'cand'; render(); scrollTop();
   api('getCandidate', { id: id }).then(function(j){ state.cand.loading = false; state.cand.data = j.data; state.cand.meta = j.meta; render(); })
     .catch(function(e){ state.cand.loading = false; state.cand.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; render(); });
@@ -748,11 +804,103 @@ function candHtml(){
   var m = c.meta;
   html += '<div style="display:flex;gap:6px;flex-wrap:wrap">' + statusPill(m.holat) + (m.guruh ? '<span class="pill">Guruh ' + esc(m.guruh) + '</span>' : '') +
     (m.qoldirgan ? '<span class="pill warn">' + esc(m.qoldirgan) + ' kun qoldirgan</span>' : '') + (m.imtihon !== '' && m.imtihon != null ? '<span class="pill ok">Imtihon: ' + esc(m.imtihon) + '</span>' : '') + '</div>';
-  html += '<p class="hint">Suhbat: ' + esc(m.suhbat) + (m.hr ? ' · HR: ' + esc(m.hr) : '') + (m.yangilangan && m.yangilangan !== m.suhbat ? ' · yangilangan ' + esc(m.yangilangan) : '') + '</p>';
+  html += '<p class="hint">Suhbat: ' + esc(m.suhbat) + (m.hr ? ' · HR: ' + esc(m.hr) : '') + (m.yangilangan && m.yangilangan !== m.suhbat ? ' · yangilangan ' + esc(m.yangilangan) : '') + (c.data.telefon ? ' · <a href="tel:+' + esc(digits(c.data.telefon)) + '">' + esc(c.data.telefon) + '</a>' : '') + '</p>';
+  html += contactCardHtml(m) + trainingCardHtml(m);
   var d = Object.assign(emptyAnketa(), c.data);
   html += '<div class="card">' + summaryHtml(d) + '</div>';
-  return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit">Tahrirlash</button></footer>';
+  return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit">Tahrirlash</button></footer>' + sheetHtml();
 }
+/* ---- Xabar berish (qo'ng'iroq/SMS) va o'qish belgilari ---- */
+var RES_LIST = ['Keladi','Javob bermadi',"Raqam o'chiq",'Rad etdi'];
+var RES_CLS = { 'Keladi':'ok', 'Javob bermadi':'warn', "Raqam o'chiq":'warn', 'Rad etdi':'bad' };
+var RES_TEXT = { 'Keladi':'kelishini tasdiqladi', 'Javob bermadi':'javob bermadi', "Raqam o'chiq":"raqam o'chiq", 'Rad etdi':'kelmasligini aytdi' };
+var NOSHOW_REASONS = ['Javob bermadi','Boshqa ish topdi','Fikridan qaytdi','Sababsiz kelmadi'];
+function notStarted(m){ return m.holat === ST.STUDYING && !m.boshlagan; }
+function canContact(m){ return m.holat === ST.NEW || m.holat === ST.NOSHOW || notStarted(m); }
+function todayIso(){ var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth()+1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function dmyToIso(s){ var m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(s || ''); return m ? m[3] + '-' + m[2] + '-' + m[1] : ''; }
+function contactCardHtml(m){
+  var log = m.aloqa || [];
+  if (!canContact(m) && !log.length) return '';
+  var html = '<div class="card"><span class="lbl up">O\'qish kuni haqida xabar</span>';
+  if (!log.length) html += '<p class="hint" style="margin:0">Hali xabar berilmagan.</p>';
+  html += log.map(function(a){
+    return '<div class="log"><div class="ic ' + (RES_CLS[a.natija] || '') + '">' + (WAY_IC[a.usul] || '📞') + '</div><div><b>' + esc(a.usul) + ' — ' + esc(RES_TEXT[a.natija] || a.natija) + '</b>' +
+      '<small>' + esc(a.sana) + (a.oqish ? ' · O\'qish kuni: ' + esc(a.oqish) : '') + (a.hr ? ' · ' + esc(a.hr) : '') + '</small>' + (a.izoh ? '<small>Izoh: ' + esc(a.izoh) + '</small>' : '') + '</div></div>';
+  }).join('');
+  if (canContact(m)) html += '<div class="row2"><button type="button" class="btn ghost small" data-contact="Qo\'ng\'iroq">📞 Qo\'ng\'iroq</button><button type="button" class="btn ghost small" data-contact="SMS">✉ SMS</button></div>';
+  return html + '</div>';
+}
+function trainingCardHtml(m){
+  var body = '', btn = '';
+  if (m.holat === ST.NEW) { body = 'Hali guruhga qo\'shilmagan.' + (m.oqishKuni ? ' O\'qish kuni: <b>' + esc(m.oqishKuni) + '</b>' : ''); btn = '<button type="button" class="btn danger small" id="ns-open">O\'qishga kelmadi deb belgilash</button>'; }
+  else if (notStarted(m)) { body = 'Guruh ' + esc(m.guruh) + '. <b>Hali bir kun ham darsga kelmagan.</b>' + (m.qoldirgan ? ' ' + esc(m.qoldirgan) + ' kun qoldirdi.' : ''); btn = '<button type="button" class="btn danger small" id="ns-open">O\'qishga kelmadi deb belgilash</button>'; }
+  else if (m.holat === ST.STUDYING) body = '<span style="color:var(--ok);font-weight:600">✓ O\'qishni boshlagan: ' + esc(m.boshlagan) + '</span>' + (m.guruh ? ' · Guruh ' + esc(m.guruh) : '');
+  else if (m.holat === ST.NOSHOW) { body = '<b>O\'qishga kelmadi.</b>' + (m.sabab ? ' Sabab: ' + esc(m.sabab) : '') + (m.guruh ? ' · Guruh ' + esc(m.guruh) : ''); btn = '<button type="button" class="btn ghost small" id="ns-undo">Qayta taklif qilish</button>'; }
+  else if (m.holat === ST.EXPELLED) body = (m.boshlagan ? 'O\'qishni ' + esc(m.boshlagan) + ' da boshlagan, keyin ' : '') + esc(m.qoldirgan || 2) + ' kun qoldirgani uchun chetlatildi.';
+  else return '';
+  return '<div class="card"><span class="lbl up">O\'qish</span><div class="hint" style="color:var(--fg)">' + body + '</div>' + btn + '</div>';
+}
+function sheetHtml(){
+  var sh = state.sheet; if (!sh) return '';
+  var html = '<div class="dim" id="sh-close"></div><div class="sheet" role="dialog" aria-modal="true">';
+  if (sh.type === 'contact') {
+    html += '<h2>Xabar berildi</h2><span class="lbl up">Usul</span><div class="seg">' + ["Qo'ng'iroq",'SMS','Telegram'].map(function(u){ return '<button type="button" data-usul="' + esc(u) + '" aria-pressed="' + (sh.usul === u) + '">' + WAY_IC[u] + ' ' + esc(u) + '</button>'; }).join('') + '</div>' +
+      '<span class="lbl up">Natija</span><div class="seg">' + RES_LIST.slice(0,2).map(resBtn).join('') + '</div><div class="seg">' + RES_LIST.slice(2).map(resBtn).join('') + '</div>' +
+      '<div class="row2"><div class="field"><label for="sh-sana">Sana</label><input type="date" id="sh-sana" value="' + esc(sh.sana) + '"></div><div class="field"><label for="sh-oqish">O\'qish kuni</label><input type="date" id="sh-oqish" value="' + esc(sh.oqish) + '"></div></div>' +
+      '<input type="text" id="sh-izoh" placeholder="Izoh (ixtiyoriy)" value="' + esc(sh.izoh) + '">' +
+      (sh.natija === 'Rad etdi' ? '<div class="alert warn" style="padding:8px 10px;font-size:13.5px">Saqlanganda holat "O\'qishga kelmadi" bo\'ladi.</div>' : '');
+  } else {
+    html += '<h2>O\'qishga kelmadi</h2><p class="hint" style="margin:0">Nomzod o\'qishni boshlamadi. Keyinroq kelsa, "Qayta taklif qilish" tugmasi bilan qaytarasiz.</p><span class="lbl up">Sabab</span><div class="chips">' +
+      NOSHOW_REASONS.map(function(r){ return '<button type="button" class="chip" data-sabab="' + esc(r) + '" aria-pressed="' + (sh.sabab === r) + '">' + esc(r) + '</button>'; }).join('') + '</div>' +
+      '<input type="text" id="sh-izoh" placeholder="Izoh (ixtiyoriy)" value="' + esc(sh.izoh) + '">';
+  }
+  if (sh.error) html += '<div class="alert bad">' + esc(sh.error) + '</div>';
+  return html + '<div class="row2"><button type="button" class="btn ghost" id="sh-cancel">Bekor qilish</button><button type="button" class="btn" id="sh-save"' + (sh.saving ? ' disabled' : '') + '>' + (sh.saving ? 'Saqlanmoqda…' : 'Saqlash') + '</button></div></div>';
+}
+function resBtn(r){ return '<button type="button" data-res="' + esc(r) + '" aria-pressed="' + (state.sheet.natija === r) + '">' + esc(r) + '</button>'; }
+function openSheet(type, usul){
+  var m = state.cand.meta;
+  state.sheet = type === 'contact' ? { type:'contact', usul: usul, natija:'', sana: todayIso(), oqish: dmyToIso(m.oqishKuni) || tomorrowIso(), izoh:'', saving:false, error:'' }
+    : { type:'noshow', sabab:'', izoh:'', saving:false, error:'' };
+  keepScroll();
+}
+function saveSheet(){
+  var sh = state.sheet, c = state.cand, call, okText;
+  if (sh.type === 'contact') {
+    if (!sh.natija) { sh.error = 'Natijani tanlang'; keepScroll(); return; }
+    call = api('addContact', { id: c.id, usul: sh.usul, natija: sh.natija, sana: sh.sana, oqish: sh.oqish, izoh: sh.izoh });
+    okText = sh.usul + ' yozib qo\'yildi: ' + (RES_TEXT[sh.natija] || sh.natija) + '.';
+  } else {
+    if (!sh.sabab) { sh.error = 'Sababni tanlang'; keepScroll(); return; }
+    call = api('setNoShow', { id: c.id, sabab: sh.sabab + (sh.izoh ? ': ' + sh.izoh : '') });
+    okText = 'Nomzod "O\'qishga kelmadi" deb belgilandi.';
+  }
+  sh.saving = true; sh.error = ''; keepScroll();
+  call.then(function(j){ state.sheet = null; state.flash = { cls: j.holat === ST.NOSHOW ? 'warn' : 'ok', text: esc(okText) }; openCand(c.id, true); })
+    .catch(function(e){ sh.saving = false; sh.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; keepScroll(); });
+}
+function undoNoShow(){
+  var c = state.cand;
+  api('setNoShow', { id: c.id, undo: true }).then(function(j){ state.flash = { cls:'ok', text: 'Nomzod qayta taklif qilindi: holati "' + esc(j.holat) + '".' }; openCand(c.id, true); })
+    .catch(function(e){ toastErr(e); render(); });
+}
+document.addEventListener('click', function(e){
+  var t = e.target.closest('button, #sh-close'); if (!t || state.screen !== 'cand') return;
+  if (t.dataset.contact) return openSheet('contact', t.dataset.contact);
+  if (t.id === 'ns-open') return openSheet('noshow');
+  if (t.id === 'ns-undo') return undoNoShow();
+  var sh = state.sheet; if (!sh) return;
+  if (t.id === 'sh-close' || t.id === 'sh-cancel') { state.sheet = null; keepScroll(); return; }
+  if (t.id === 'sh-save') return saveSheet();
+  if (t.dataset.usul) { sh.usul = t.dataset.usul; haptic(); keepScroll(); }
+  else if (t.dataset.res) { sh.natija = t.dataset.res; sh.error = ''; haptic(); keepScroll(); }
+  else if (t.dataset.sabab) { sh.sabab = t.dataset.sabab; sh.error = ''; haptic(); keepScroll(); }
+});
+document.addEventListener('input', function(e){
+  var sh = state.sheet, t = e.target; if (!sh) return;
+  if (t.id === 'sh-izoh') sh.izoh = t.value; else if (t.id === 'sh-sana') sh.sana = t.value; else if (t.id === 'sh-oqish') sh.oqish = t.value;
+});
 function editCand(){
   var c = state.cand; if (!c || !c.data) return;
   state.flash = null; state.editId = c.id; state.editMeta = c.meta;
@@ -770,11 +918,12 @@ function runSearch(){
     .catch(function(){ if (my === searchSeq) state.searchRes = []; })
     .then(function(){ if (my === searchSeq) { state.searchLoading = false; updateCandList(); } });
 }
-function updateCandList(){ var el = document.getElementById('cand-list'); if (el) el.innerHTML = candListHtml(); }
+function updateCandList(){ var el = document.getElementById('cand-list'); if (el && state.screen === 'home') { el.innerHTML = candListHtml(); return true; } return false; }
 document.addEventListener('click', function(e){
   var it = e.target.closest('[data-cand]'); if (it) { openCand(it.dataset.cand); return; }
   var t = e.target.closest('button'); if (!t) return;
-  if (t.id === 'c-back') { goHome(); return; }
+  if (t.id === 'c-back') { state.sheet = null; state.flash = null; goHome(); return; }
+  if (t.dataset.filter) { state.filter = t.dataset.filter; haptic(); loadRecent(); return; }
   if (t.id === 'c-edit') { editCand(); return; }
 });
 document.addEventListener('keydown', function(e){ var it = e.target.closest && e.target.closest('[data-cand]'); if (it && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openCand(it.dataset.cand); } });
