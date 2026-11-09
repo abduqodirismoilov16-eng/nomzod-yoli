@@ -128,7 +128,12 @@ function doPost(e) {
     var user = authorize_(req.auth || {});
     var data = req.data || {};
     switch (req.action) {
-      case 'config': return json_({ ok: true, user: user, config: getConfig_() });
+      case 'config': {
+        // Ilova ochilganda bitta so'rov: sozlamalar + ro'yxat birga
+        var cfgOut = { ok: true, user: user, config: getConfig_() };
+        if (data.recent) { ensureSchema_(); cfgOut.recent = recent_(data.recent); }
+        return json_(cfgOut);
+      }
       case 'checkPhone': return json_({ ok: true, matches: findByPhone_(data.phone) });
       case 'submitAnketa': return json_(submitAnketa_(data, user));
       case 'recent': ensureSchema_(); return json_(recent_(data.filter));
@@ -173,6 +178,10 @@ function authorize_(auth) {
     var tg = verifyInitData_(auth.initData, token, 24 * 3600);
     if (!tg) throw userError_("Telegram ma'lumoti tasdiqlanmadi. Ilovani bot orqali qayta oching", 'auth');
     var allowed = String(getSetting_('HR Telegram ID') || '').split(/[,\s]+/).filter(String);
+    if (allowed.indexOf(String(tg.id)) === -1) {   // yangi qo'shilgan bo'lishi mumkin: keshsiz qayta tekshiramiz
+      keshniTozalash();
+      allowed = String(getSetting_('HR Telegram ID') || '').split(/[,\s]+/).filter(String);
+    }
     if (allowed.indexOf(String(tg.id)) === -1) {
       throw userError_('Sizda ruxsat yo\'q. Telegram ID: ' + tg.id + '. Uni Sozlamalar varag\'iga qo\'shing', 'forbidden');
     }
@@ -220,14 +229,58 @@ function toHex_(bytes) {
 // ---------------------------------------------------------------------------
 // Sozlamalar
 // ---------------------------------------------------------------------------
+/**
+ * Sozlamalar 5 daqiqaga keshda saqlanadi (har so'rovda varaqni o'qimaslik uchun).
+ * Sozlamalar varag'ini qo'lda o'zgartirsangiz, kuchga kirishi 5 daqiqagacha cho'zilishi mumkin
+ * yoki keshniTozalash() ni ishga tushiring.
+ */
+var SETTINGS_CACHE_KEY = 'sozlamalar_v1', settingsMemo_ = null;
 function settingsMap_() {
+  if (settingsMemo_) return settingsMemo_;
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get(SETTINGS_CACHE_KEY);
+  if (hit) { try { settingsMemo_ = JSON.parse(hit); return settingsMemo_; } catch (e) {} }
   var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.SOZLAMALAR);
   var map = {};
-  if (!sh || sh.getLastRow() < 2) return map;
-  sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
-    if (r[0] !== '') map[String(r[0]).trim()] = r[1];
-  });
+  if (sh && sh.getLastRow() >= 2) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function (r) {
+      if (r[0] !== '') map[String(r[0]).trim()] = r[1];
+    });
+  }
+  try { cache.put(SETTINGS_CACHE_KEY, JSON.stringify(map), 300); } catch (e) {}
+  settingsMemo_ = map;
   return map;
+}
+
+/** Sozlamalar varag'i qo'lda o'zgartirilsa kesh avtomatik tozalanadi */
+function onEdit(e) {
+  try { if (e && e.range && e.range.getSheet().getName() === SHEETS.SOZLAMALAR) keshniTozalash(); } catch (err) {}
+}
+
+/** Sozlamalar varag'ini o'zgartirgandan keyin darhol kuchga kiritish uchun */
+function keshniTozalash() {
+  CacheService.getScriptCache().remove(SETTINGS_CACHE_KEY);
+  settingsMemo_ = null;
+  return 'Kesh tozalandi';
+}
+
+/**
+ * Bir marta ishga tushiring: skript har 5 daqiqada "uyg'onib" turadi,
+ * shunda ilova birinchi ochilganda uzoq kutmaydi.
+ */
+function tezlikniYoqish() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'uygoqSaqlash') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('uygoqSaqlash').timeBased().everyMinutes(5).create();
+  uygoqSaqlash();
+  return 'Tayyor: har 5 daqiqada uyg\'otib turiladi';
+}
+
+function uygoqSaqlash() {
+  settingsMemo_ = null;
+  CacheService.getScriptCache().remove(SETTINGS_CACHE_KEY);
+  settingsMap_();   // keshni yangilaydi va Sheets ulanishini "isitadi"
 }
 
 function getSetting_(key) { return settingsMap_()[key]; }
