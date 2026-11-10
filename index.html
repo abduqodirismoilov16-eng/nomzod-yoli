@@ -109,6 +109,7 @@ input[type=search]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 .sheet h2{margin:0;font-size:18px}
 .sheet .seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
 .sheet .seg button[aria-pressed="true"][data-res="Keladi"]{background:var(--ok);border-color:var(--ok);color:#fff}
+.sheet .seg button[aria-pressed="true"][data-res="Kutilmoqda"]{background:var(--warn);border-color:var(--warn);color:#fff}
 .sheet .seg button[aria-pressed="true"][data-res="Rad etdi"]{background:var(--bad);border-color:var(--bad);color:#fff}
 .review{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:6px 12px;font-size:14.5px}
 .review dt{color:var(--muted)}
@@ -848,9 +849,9 @@ function candHtml(){
   return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit"' + (c.stale ? ' disabled' : '') + '>' + (c.stale ? 'Yangilanmoqda…' : 'Tahrirlash') + '</button></footer>' + sheetHtml();
 }
 /* ---- Xabar berish (qo'ng'iroq/SMS) va o'qish belgilari ---- */
-var RES_LIST = ['Keladi','Javob bermadi',"Raqam o'chiq",'Rad etdi'];
-var RES_CLS = { 'Keladi':'ok', 'Javob bermadi':'warn', "Raqam o'chiq":'warn', 'Rad etdi':'bad' };
-var RES_TEXT = { 'Keladi':'kelishini tasdiqladi', 'Javob bermadi':'javob bermadi', "Raqam o'chiq":"raqam o'chiq", 'Rad etdi':'kelmasligini aytdi' };
+var RES_LIST = ['Keladi','Kutilmoqda','Javob bermadi',"Raqam o'chiq",'Rad etdi'];
+var RES_CLS = { 'Keladi':'ok', 'Kutilmoqda':'warn', 'Javob bermadi':'warn', "Raqam o'chiq":'warn', 'Rad etdi':'bad' };
+var RES_TEXT = { 'Keladi':'kelishini tasdiqladi', 'Kutilmoqda':'javobi kutilmoqda', 'Javob bermadi':'javob bermadi', "Raqam o'chiq":"raqam o'chiq", 'Rad etdi':'kelmasligini aytdi' };
 var NOSHOW_REASONS = ['Javob bermadi','Boshqa ish topdi','Fikridan qaytdi','Sababsiz kelmadi'];
 function notStarted(m){ return m.holat === ST.STUDYING && !m.boshlagan; }
 function canContact(m){ return m.holat === ST.NEW || m.holat === ST.NOSHOW || notStarted(m); }
@@ -883,7 +884,7 @@ function sheetHtml(){
   var html = '<div class="dim" id="sh-close"></div><div class="sheet" role="dialog" aria-modal="true">';
   if (sh.type === 'contact') {
     html += '<h2>Xabar berildi</h2><span class="lbl up">Usul</span><div class="seg">' + ["Qo'ng'iroq",'SMS','Telegram'].map(function(u){ return '<button type="button" data-usul="' + esc(u) + '" aria-pressed="' + (sh.usul === u) + '">' + WAY_IC[u] + ' ' + esc(u) + '</button>'; }).join('') + '</div>' +
-      '<span class="lbl up">Natija</span><div class="seg">' + RES_LIST.slice(0,2).map(resBtn).join('') + '</div><div class="seg">' + RES_LIST.slice(2).map(resBtn).join('') + '</div>' +
+      '<span class="lbl up">Natija</span><div class="seg">' + RES_LIST.slice(0,3).map(resBtn).join('') + '</div><div class="seg">' + RES_LIST.slice(3).map(resBtn).join('') + '</div>' +
       '<div class="row2"><div class="field"><label for="sh-sana">Sana</label><input type="date" id="sh-sana" value="' + esc(sh.sana) + '"></div><div class="field"><label for="sh-oqish">O\'qish kuni</label><input type="date" id="sh-oqish" value="' + esc(sh.oqish) + '"></div></div>' +
       '<input type="text" id="sh-izoh" placeholder="Izoh (ixtiyoriy)" value="' + esc(sh.izoh) + '">' +
       (sh.natija === 'Rad etdi' ? '<div class="alert warn" style="padding:8px 10px;font-size:13.5px">Saqlanganda holat "O\'qishga kelmadi" bo\'ladi.</div>' : '');

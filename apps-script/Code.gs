@@ -509,7 +509,7 @@ function listItem_(r) {
 function filterOf_(r) {
   var h = r['Holat'];
   if (h === STATUS.NOSHOW) return 'noshow';
-  if (h === STATUS.NEW) return r['Aloqa natijasi'] === CONTACT_RES.YES ? 'waiting' : 'noContact';
+  if (h === STATUS.NEW) return r['Aloqa natijasi'] === CONTACT_RES.YES || r['Aloqa natijasi'] === CONTACT_RES.WAIT ? 'waiting' : 'noContact';
   if (h === STATUS.STUDYING) return r['Boshlagan sana'] ? 'studying' : 'waiting';
   return '';
 }
@@ -908,7 +908,7 @@ function search_(q) {
 // Nomzodga xabar berish (qo'ng'iroq/SMS) va o'qishni boshlagan/kelmaganini belgilash
 // ---------------------------------------------------------------------------
 var CONTACT_WAYS = ["Qo'ng'iroq", 'SMS', 'Telegram'];
-var CONTACT_RES = { YES: 'Keladi', NOANSWER: 'Javob bermadi', OFF: "Raqam o'chiq", NO: 'Rad etdi' };
+var CONTACT_RES = { YES: 'Keladi', WAIT: 'Kutilmoqda', NOANSWER: 'Javob bermadi', OFF: "Raqam o'chiq", NO: 'Rad etdi' };
 var SCHEMA_VERSION = '2';
 
 /**
