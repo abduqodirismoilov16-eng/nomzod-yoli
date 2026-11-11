@@ -138,6 +138,8 @@ input[type=search]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 .seg button[aria-pressed="true"][data-v="Kelmadi"]{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
 .att .rate .chip{min-height:36px;padding:5px 0;font-size:14px}
 .att.off{opacity:.6}
+.seg button.pass[aria-pressed="true"]{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+.seg button.fail[aria-pressed="true"]{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
 .pick{display:flex;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);cursor:pointer}
 .pick:last-child{border-bottom:none}
 .pick input{width:22px;height:22px;accent-color:var(--accent);flex-shrink:0;margin:0}
@@ -288,9 +290,9 @@ function months(from, to){
 function expLabel(m){ if(!m) return "Tajriba yo'q"; var y = Math.floor(m/12), r = m % 12; return [y ? y + ' yil' : '', r ? r + ' oy' : ''].filter(Boolean).join(' '); }
 function money(s){ var d = String(s||'').replace(/\D/g,''); return d ? d.replace(/\B(?=(\d{3})+(?!\d))/g,' ') : ''; }
 function haptic(){ try { TG && TG.HapticFeedback && TG.HapticFeedback.selectionChanged(); } catch(e){} }
-var ST = { NEW: "O'qishga taklif qilindi", STUDYING: "O'qishda", EXPELLED: 'Chetlatildi', NOSHOW: "O'qishga kelmadi" };
+var ST = { NEW: "O'qishga taklif qilindi", STUDYING: "O'qishda", EXPELLED: 'Chetlatildi', NOSHOW: "O'qishga kelmadi", PASSED: "Imtihondan o'tdi", FAILED: "Imtihondan o'tmadi" };
 var WAY_IC = { "Qo'ng'iroq": '📞', SMS: '✉', Telegram: '✈' };
-function statusPill(h){ var c = /taklif/i.test(h) ? 'ok' : /zaxira/i.test(h) ? 'warn' : /rad|chetlat/i.test(h) ? 'bad' : /kelmadi/i.test(h) ? 'gray' : ''; return '<span class="pill ' + c + '">' + esc(h) + '</span>'; }
+function statusPill(h){ var c = h === ST.PASSED ? 'ok' : h === ST.FAILED ? 'bad' : /taklif/i.test(h) ? 'ok' : /zaxira/i.test(h) ? 'warn' : /rad|chetlat/i.test(h) ? 'bad' : /kelmadi/i.test(h) ? 'gray' : ''; return '<span class="pill ' + c + '">' + esc(h) + '</span>'; }
 /* Ro'yxatdagi ikkinchi belgi: xabar berilgani yoki o'qishni boshlagani */
 function extraPill(r){
   if (r.holat === ST.NEW) {
@@ -483,9 +485,10 @@ function render(){
   else if (s === 'done') html = demoBar + doneHtml();
   else if (s === 'gnew') html = demoBar + groupNewHtml();
   else if (s === 'day') html = demoBar + dayHtml();
+  else if (s === 'exam') html = demoBar + examHtml();
   else if (s === 'cand') html = demoBar + candHtml();
   app.innerHTML = html;
-  if (TG && TG.BackButton) { try { (s === 'form' || s === 'gnew' || s === 'day' || s === 'cand') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
+  if (TG && TG.BackButton) { try { (s === 'form' || s === 'gnew' || s === 'day' || s === 'exam' || s === 'cand') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
 }
 function homeHtml(){
   var tab = state.tab || 'anketa';
@@ -679,7 +682,8 @@ function groupsHtml(){
       '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">' + groupPills(g) + '</div></div>' +
       '<button type="button" class="btn ghost" style="padding:8px 12px;font-size:14px;align-self:flex-start" data-addto="' + esc(g.group) + '">+ Nomzod qo\'shish</button>' +
       '<span class="lbl">Davomat kuni</span><div class="days">' + [1,2,3,4,5].map(function(d){ var done = g.daysDone.indexOf(d) > -1;
-        return '<button type="button" class="' + (done ? 'done' : '') + '" data-day="' + d + '" data-group="' + esc(g.group) + '">' + (done ? '✓ ' : '') + d + '-kun</button>'; }).join('') + '</div></div>';
+        return '<button type="button" class="' + (done ? 'done' : '') + '" data-day="' + d + '" data-group="' + esc(g.group) + '">' + (done ? '✓ ' : '') + d + '-kun</button>'; }).join('') + '</div>' +
+      '<button type="button" class="btn' + (g.passed || g.failed ? ' ghost' : '') + '" style="padding:10px 12px;font-size:15px" data-exam="' + esc(g.group) + '">🎯 Imtihon natijasi' + (g.passed || g.failed ? ' · ' + g.passed + ' o\'tdi, ' + g.failed + ' o\'tmadi' : '') + '</button></div>';
   }).join('');
 }
 function groupPills(g){
@@ -687,6 +691,8 @@ function groupPills(g){
   if (g.notStarted) out += '<span class="pill warn">' + g.notStarted + ' hali kelmagan</span>';
   if (g.noshow) out += '<span class="pill gray">' + g.noshow + ' kelmadi</span>';
   if (g.expelled) out += '<span class="pill bad">' + g.expelled + ' chetlatildi</span>';
+  if (g.passed) out += '<span class="pill ok">🎯 ' + g.passed + ' o\'tdi</span>';
+  if (g.failed) out += '<span class="pill bad">' + g.failed + ' o\'tmadi</span>';
   return out;
 }
 function loadGroups(){
@@ -789,6 +795,10 @@ document.addEventListener('click', function(e){
   if (t.id === 'g-cancel' || t.id === 'd-back') return goGroups();
   if (t.id === 'g-create') return createGroup();
   if (t.id === 'd-save') return saveDay();
+  if (t.dataset.exam) return openExam(t.dataset.exam);
+  if (t.id === 'e-back') return goGroups();
+  if (t.id === 'e-save') return saveExam();
+  if (state.screen === 'exam' && state.examv && t.dataset.eres) { var em = state.examv.marks[t.dataset.eres]; em.natija = em.natija === t.dataset.v ? '' : t.dataset.v; em.manual = !!em.natija; state.examv.error = ''; haptic(); keepScroll(); return; }
   if (t.dataset.day) return openDay(t.dataset.group, +t.dataset.day);
   var v = state.dayv; if (!v || state.screen !== 'day') return;
   if (t.dataset.att || t.id === 'all-present') v.error = '';
@@ -797,10 +807,70 @@ document.addEventListener('click', function(e){
   if (t.dataset.baho) { var mb = v.marks[t.dataset.baho]; mb.baho = mb.baho === t.dataset.v ? '' : t.dataset.v; haptic(); keepScroll(); return; }
   if (t.dataset.izohOpen) { v.open[t.dataset.izohOpen] = true; keepScroll(); var x = document.querySelector('[data-izoh="' + t.dataset.izohOpen + '"]'); x && x.focus(); return; }
 });
+
+/* ================= 3-bosqich: imtihon natijasi ================= */
+function openExam(group){
+  state.flash = null; state.examv = { group: group, items: null, marks: {}, passMark: 80, saving: false, error: '' }; state.screen = 'exam'; render(); scrollTop();
+  api('getExam', { group: group }).then(function(j){
+    var v = state.examv; v.items = j.items || []; v.passMark = j.passMark || 80;
+    v.items.forEach(function(it){ v.marks[it.id] = { ball: it.ball === '' || it.ball == null ? '' : String(it.ball), natija: it.natija || '', izoh: it.izoh || '', manual: false, orig: (it.ball === '' || it.ball == null ? '' : String(it.ball)) + '|' + (it.natija || '') + '|' + (it.izoh || '') };
+      if (v.marks[it.id].natija && v.marks[it.id].ball === '') v.marks[it.id].manual = true; });
+    render();
+  }).catch(function(e){ state.examv.items = []; state.examv.error = e.message; render(); });
+}
+function autoRes(v, ball){ if (ball === '' || isNaN(+ball)) return ''; return +ball >= v.passMark ? "O'tdi" : "O'tmadi"; }
+function examBallInput(t){
+  var v = state.examv, m = v.marks[t.dataset.ball]; var val = t.value.replace(',', '.').replace(/[^\d.]/g, '');
+  if (val !== '' && +val > 100) val = '100';
+  m.ball = val; m.natija = autoRes(v, val); m.manual = false; v.error = '';
+  var row = t.closest('.att'); if (row) row.querySelectorAll('[data-eres]').forEach(function(b){ b.setAttribute('aria-pressed', String(b.dataset.v === m.natija)); });
+  examCounts();
+}
+function examCounts(){
+  var v = state.examv, p = 0, f = 0; Object.keys(v.marks).forEach(function(k){ if (v.marks[k].natija === "O'tdi") p++; else if (v.marks[k].natija === "O'tmadi") f++; });
+  var el = document.getElementById('e-counts'); if (el) el.innerHTML = examCountsHtml(p, f);
+  return { p: p, f: f };
+}
+function examCountsHtml(p, f){ return '<span class="pill ok">O\'tdi ' + p + '</span><span class="pill bad">O\'tmadi ' + f + '</span>'; }
+function examHtml(){
+  var v = state.examv, html = '<header class="top"><div class="top-row"><h1>Guruh ' + esc(v.group) + ' · Imtihon</h1></div>';
+  if (v.items && v.items.length) { var p = 0, f = 0; Object.keys(v.marks).forEach(function(k){ if (v.marks[k].natija === "O'tdi") p++; else if (v.marks[k].natija === "O'tmadi") f++; });
+    html += '<div id="e-counts" style="display:flex;gap:6px;flex-wrap:wrap">' + examCountsHtml(p, f) + '</div>'; }
+  html += '</header><main>';
+  if (!v.items) return html + '<div class="spinner"></div></main>';
+  if (!v.items.length) return html + '<p class="hint">Bu guruhda nomzod yo\'q.</p>' + (v.error ? '<div class="alert bad">' + esc(v.error) + '</div>' : '') + '</main>';
+  html += '<p class="hint">Ball yozing (0–100): ' + v.passMark + ' va undan yuqori bo\'lsa "O\'tdi" o\'zi belgilanadi. Ball yozmasdan to\'g\'ridan-to\'g\'ri tugmani bossangiz ham bo\'ladi.</p>';
+  html += '<div class="card" style="gap:0;padding-block:2px">' + v.items.map(function(it){
+    var m = v.marks[it.id];
+    if (!it.can) return '<div class="att off"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' + statusPill(it.status) + '</div></div>';
+    return '<div class="att"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' +
+      '<input type="text" inputmode="decimal" data-ball="' + esc(it.id) + '" value="' + esc(m.ball) + '" placeholder="Ball" aria-label="Ball" style="width:78px;flex:none;text-align:center;font-size:16px;padding:8px"></div>' +
+      '<div class="seg" role="group" aria-label="Natija">' + ["O'tdi", "O'tmadi"].map(function(h){ return '<button type="button" class="' + (h === "O'tdi" ? 'pass' : 'fail') + '" data-eres="' + esc(it.id) + '" data-v="' + esc(h) + '" aria-pressed="' + (m.natija === h) + '">' + (h === "O'tdi" ? '✓ ' : '✕ ') + esc(h) + '</button>'; }).join('') + '</div>' +
+      '<input type="text" data-eizoh="' + esc(it.id) + '" placeholder="Izoh (ixtiyoriy)" value="' + esc(m.izoh) + '">' +
+      '</div>';
+  }).join('') + '</div>';
+  if (v.error) html += '<div class="alert bad">' + esc(v.error) + '</div>';
+  return html + '</main><footer class="actions"><button class="btn ghost" id="e-back">Orqaga</button><button class="btn" id="e-save"' + (v.saving ? ' disabled' : '') + '>' + (v.saving ? 'Saqlanmoqda…' : 'Saqlash') + '</button></footer>';
+}
+function saveExam(){
+  var v = state.examv; if (!v || !v.items) return;
+  var entries = v.items.filter(function(it){ var m = v.marks[it.id]; return it.can && (m.ball + '|' + m.natija + '|' + m.izoh) !== m.orig; })
+    .map(function(it){ var m = v.marks[it.id]; return { id: it.id, ball: m.ball, natija: m.natija, izoh: m.izoh }; });
+  if (!entries.length) { v.error = "Hech narsa o'zgarmadi. Nomzodga ball yozing yoki O'tdi / O'tmadi ni bosing."; render(); return; }
+  v.saving = true; v.error = ''; render();
+  api('saveExam', { group: v.group, entries: entries }).then(function(j){
+    var parts = ['Imtihon natijasi saqlandi.'];
+    if (j.passed && j.passed.length) parts.push("O'tdi: <b>" + j.passed.map(esc).join(', ') + '</b>.');
+    if (j.failed && j.failed.length) parts.push("O'tmadi: " + j.failed.map(esc).join(', ') + '.');
+    state.flash = { cls: 'ok', text: parts.join(' ') }; goGroups();
+  }).catch(function(e){ v.saving = false; v.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q. Qayta urinib ko'ring." : e.message; render(); });
+}
 function keepScroll(){ var y = window.scrollY; render(); window.scrollTo(0, y); }
 document.addEventListener('input', function(e){
   var t = e.target;
-  if (t.dataset && t.dataset.izoh && state.dayv) state.dayv.marks[t.dataset.izoh].izoh = t.value;
+  if (t.dataset && t.dataset.izoh && state.dayv && state.screen === 'day') state.dayv.marks[t.dataset.izoh].izoh = t.value;
+  if (t.dataset && t.dataset.eizoh && state.examv) state.examv.marks[t.dataset.eizoh].izoh = t.value;
+  if (t.dataset && t.dataset.ball && state.examv) examBallInput(t);
 });
 document.addEventListener('change', function(e){
   var t = e.target;
@@ -1030,7 +1100,7 @@ function updateFsBtn(){ var b = document.getElementById('fs-btn'); if (b) { b.in
 document.addEventListener('click', function(e){ var t = e.target.closest('#fs-btn'); if (t) toggleFs(); });
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && isFs()) { e.preventDefault(); toggleFs(); } });
 function boot(){
-  if (TG) { try { TG.ready(); TG.expand(); goFullscreen(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); else if (state.screen === 'gnew' || state.screen === 'day') goGroups(); else if (state.screen === 'cand') goHome(); }); } catch(e){} }
+  if (TG) { try { TG.ready(); TG.expand(); goFullscreen(); applyTheme(); TG.onEvent && TG.onEvent('themeChanged', applyTheme); TG.BackButton.onClick(function(){ if (state.screen === 'form') back(); else if (state.screen === 'gnew' || state.screen === 'day' || state.screen === 'exam') goGroups(); else if (state.screen === 'cand') goHome(); }); } catch(e){} }
   if (DEMO) { state.auth = { demo:true }; return api('config').then(afterAuth); }
   if (IN_TG) {
     state.auth = { initData: TG.initData };

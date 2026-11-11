@@ -66,8 +66,11 @@ var STATUS = {
   REJECTED: 'Rad etildi',
   STUDYING: "O'qishda",
   EXPELLED: 'Chetlatildi',
-  NOSHOW: "O'qishga kelmadi"
+  NOSHOW: "O'qishga kelmadi",
+  PASSED: "Imtihondan o'tdi",
+  FAILED: "Imtihondan o'tmadi"
 };
+var EXAM = { PASS: "O'tdi", FAIL: "O'tmadi" };
 var ATT = { PRESENT: 'Keldi', LATE: 'Kechikdi', ABSENT: 'Kelmadi' };
 var TRAINING_DAYS = 5;
 
@@ -145,6 +148,8 @@ function doPost(e) {
       case 'groups': ensureSchema_(); return json_({ ok: true, items: listGroups_() });
       case 'getDay': return json_(getDay_(data));
       case 'saveDay': ensureSchema_(); return json_(saveDay_(data));
+      case 'getExam': return json_(getExam_(data));
+      case 'saveExam': return json_(saveExam_(data));
       case 'getCandidate': ensureSchema_(); return json_(getCandidate_(data));
       case 'updateAnketa': return json_(updateAnketa_(data, user));
       case 'search': return json_({ ok: true, items: search_(data.q) });
@@ -642,6 +647,8 @@ function listGroups_() {
       started: mine.filter(function (m) { return m['Holat'] === STATUS.STUDYING && m['Boshlagan sana']; }).length,
       notStarted: mine.filter(function (m) { return m['Holat'] === STATUS.STUDYING && !m['Boshlagan sana']; }).length,
       noshow: mine.filter(function (m) { return m['Holat'] === STATUS.NOSHOW; }).length,
+      passed: mine.filter(function (m) { return m['Holat'] === STATUS.PASSED; }).length,
+      failed: mine.filter(function (m) { return m['Holat'] === STATUS.FAILED; }).length,
       daysDone: Object.keys(days).map(Number).sort()
     };
   }).reverse();
@@ -741,6 +748,90 @@ function saveDay_(d) {
   if (noshow.length) lines.push('🚫 Guruh ' + group + ', ' + day + '-kun: o\'qishga kelmadi (bir kun ham kelmadi):\n• ' + noshow.join('\n• '));
   if (lines.length) notify_(lines.join('\n\n'));
   return { ok: true, warned: warned, expelled: expelled, restored: restored, noshow: noshow };
+}
+
+// ---------------------------------------------------------------------------
+// 3-bosqich: imtihon natijasi (ball 0-100, o'tish bali Sozlamalar'dan)
+// ---------------------------------------------------------------------------
+function passMark_() { var v = Number(getSetting_("O'tish bali")); return v > 0 ? v : 80; }
+
+function getExam_(d) {
+  var group = String(d.group || '');
+  if (!group) throw userError_('Guruh tanlanmagan', 'validation');
+  ensureSheet_(SHEETS.IMTIHON);
+  var ex = table_(SHEETS.IMTIHON).rows.filter(function (r) { return String(r['Guruh']) === group; });
+  var members = table_(SHEETS.NOMZODLAR).rows.filter(function (m) { return String(m['Guruh']) === group; });
+  var CAN = [STATUS.STUDYING, STATUS.PASSED, STATUS.FAILED];
+  return {
+    ok: true, group: group, passMark: passMark_(),
+    items: members.map(function (m) {
+      var id = String(m['ID']);
+      var r = ex.filter(function (x) { return String(x['Nomzod ID']) === id; })[0];
+      return {
+        id: id, name: m["F.I.Sh."], status: m['Holat'], can: CAN.indexOf(m['Holat']) > -1,
+        ball: r && r['Jami ball'] !== '' ? Number(r['Jami ball']) : '',
+        natija: r ? String(r['Natija'] || '') : '', izoh: r ? String(r['HR izohi'] || '') : ''
+      };
+    }).sort(function (a, b) { return (b.can ? 1 : 0) - (a.can ? 1 : 0); })
+  };
+}
+
+function saveExam_(d) {
+  var group = String(d.group || '');
+  var entries = Array.isArray(d.entries) ? d.entries : [];
+  if (!group) throw userError_('Guruh tanlanmagan', 'validation');
+  var mark = passMark_();
+  entries.forEach(function (e) {
+    if (e.ball !== '' && e.ball != null && !(Number(e.ball) >= 0 && Number(e.ball) <= 100)) throw userError_("Ball 0 dan 100 gacha bo'lishi kerak", 'validation');
+    if (!e.natija && (e.ball === '' || e.ball == null)) return;
+    if (e.natija && [EXAM.PASS, EXAM.FAIL].indexOf(e.natija) === -1) throw userError_("Natija noto'g'ri", 'validation');
+  });
+  ensureSheet_(SHEETS.IMTIHON);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  var passed = [], failed = [], cleared = 0;
+  try {
+    var n = table_(SHEETS.NOMZODLAR);
+    var members = {};
+    n.rows.forEach(function (m) { if (String(m['Guruh']) === group) members[String(m['ID'])] = m; });
+    var ex = table_(SHEETS.IMTIHON);
+    var now = new Date();
+    var CAN = [STATUS.STUDYING, STATUS.PASSED, STATUS.FAILED];
+    entries.forEach(function (e) {
+      var m = members[String(e.id)];
+      if (!m || CAN.indexOf(m['Holat']) === -1) return;
+      var hasBall = e.ball !== '' && e.ball != null;
+      var ball = hasBall ? Math.round(Number(e.ball) * 10) / 10 : '';
+      var natija = e.natija || (hasBall ? (ball >= mark ? EXAM.PASS : EXAM.FAIL) : '');
+      var existing = ex.rows.filter(function (x) { return String(x['Guruh']) === group && String(x['Nomzod ID']) === String(e.id); })[0];
+      if (!natija) {
+        // Natija olib tashlandi: nomzod yana "O'qishda"
+        if (existing) { setCell_(ex, existing._row, 'Jami ball', ''); setCell_(ex, existing._row, 'Natija', ''); setCell_(ex, existing._row, 'HR izohi', e.izoh || ''); }
+        if (m['Holat'] !== STATUS.STUDYING) { setCell_(n, m._row, 'Holat', STATUS.STUDYING); setCell_(n, m._row, 'Imtihon balli', ''); setCell_(n, m._row, 'Yangilangan', now); cleared++; }
+        return;
+      }
+      if (existing) {
+        setCell_(ex, existing._row, 'Sana', now);
+        setCell_(ex, existing._row, 'Jami ball', ball);
+        setCell_(ex, existing._row, 'Natija', natija);
+        setCell_(ex, existing._row, 'HR izohi', e.izoh || '');
+      } else {
+        var row = {};
+        row['Sana'] = now; row['Nomzod ID'] = String(e.id); row["F.I.Sh."] = m["F.I.Sh."]; row['Guruh'] = group;
+        row['Ballar'] = ''; row['Jami ball'] = ball; row['Natija'] = natija; row['HR izohi'] = e.izoh || '';
+        appendObj_(ex.sh, HEADERS.Imtihon, row);
+        ex.rows.push({ 'Guruh': group, 'Nomzod ID': String(e.id), _row: ex.sh.getLastRow() });
+      }
+      var target = natija === EXAM.PASS ? STATUS.PASSED : STATUS.FAILED;
+      setCell_(n, m._row, 'Imtihon balli', ball);
+      if (m['Holat'] !== target) { setCell_(n, m._row, 'Holat', target); }
+      setCell_(n, m._row, 'Yangilangan', now);
+      (natija === EXAM.PASS ? passed : failed).push(m["F.I.Sh."] + (hasBall ? ' (' + ball + ')' : ''));
+    });
+  } finally {
+    lock.releaseLock();
+  }
+  return { ok: true, passed: passed, failed: failed, cleared: cleared, passMark: mark };
 }
 
 /** HR'ga bot orqali xabar yuboradi. HR botga kamida bir marta /start yozgan bo'lishi kerak. */
