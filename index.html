@@ -487,7 +487,7 @@ function render(){
   else if (s === 'day') html = demoBar + dayHtml();
   else if (s === 'exam') html = demoBar + examHtml();
   else if (s === 'cand') html = demoBar + candHtml();
-  app.innerHTML = html;
+  app.innerHTML = html; if (s === 'exam') examFilter();
   if (TG && TG.BackButton) { try { (s === 'form' || s === 'gnew' || s === 'day' || s === 'exam' || s === 'cand') ? TG.BackButton.show() : TG.BackButton.hide(); } catch(e){} }
 }
 function homeHtml(){
@@ -818,6 +818,12 @@ function openExam(group){
     render();
   }).catch(function(e){ state.examv.items = []; state.examv.error = e.message; render(); });
 }
+function normQ(x){ return String(x || '').toLowerCase().replace(/[ʻʼ‘’`'ʹ]/g, '').replace(/\s+/g, ' ').trim(); }
+function examFilter(){
+  var v = state.examv, q = normQ(v && v.q), any = false;
+  document.querySelectorAll('#e-list .att').forEach(function(el){ var ok = !q || el.dataset.nm.indexOf(q) > -1; el.style.display = ok ? '' : 'none'; if (ok) any = true; });
+  var n = document.getElementById('e-none'); if (n) n.style.display = any ? 'none' : '';
+}
 function autoRes(v, ball){ if (ball === '' || isNaN(+ball)) return ''; return +ball >= v.passMark ? "O'tdi" : "O'tmadi"; }
 function examBallInput(t){
   var v = state.examv, m = v.marks[t.dataset.ball]; var val = t.value.replace(',', '.').replace(/[^\d.]/g, '');
@@ -840,15 +846,16 @@ function examHtml(){
   if (!v.items) return html + '<div class="spinner"></div></main>';
   if (!v.items.length) return html + '<p class="hint">Bu guruhda nomzod yo\'q.</p>' + (v.error ? '<div class="alert bad">' + esc(v.error) + '</div>' : '') + '</main>';
   html += '<p class="hint">Ball yozing (0–100): ' + v.passMark + ' va undan yuqori bo\'lsa "O\'tdi" o\'zi belgilanadi. Ball yozmasdan to\'g\'ridan-to\'g\'ri tugmani bossangiz ham bo\'ladi.</p>';
-  html += '<div class="card" style="gap:0;padding-block:2px">' + v.items.map(function(it){
+  html += '<input type="search" id="e-q" placeholder="🔍 Nomzodni qidirish (ism yoki familiya)" value="' + esc(v.q || '') + '" autocomplete="off" style="font-size:16px">';
+  html += '<div class="card" id="e-list" style="gap:0;padding-block:2px">' + v.items.map(function(it){
     var m = v.marks[it.id];
-    if (!it.can) return '<div class="att off"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' + statusPill(it.status) + '</div></div>';
-    return '<div class="att"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' +
+    if (!it.can) return '<div class="att off" data-nm="' + esc(normQ(it.name)) + '"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' + statusPill(it.status) + '</div></div>';
+    return '<div class="att" data-nm="' + esc(normQ(it.name)) + '"><div class="att-top"><span class="nm">' + esc(it.name) + '</span>' +
       '<input type="text" inputmode="decimal" data-ball="' + esc(it.id) + '" value="' + esc(m.ball) + '" placeholder="Ball" aria-label="Ball" style="width:78px;flex:none;text-align:center;font-size:16px;padding:8px"></div>' +
       '<div class="seg" role="group" aria-label="Natija">' + ["O'tdi", "O'tmadi"].map(function(h){ return '<button type="button" class="' + (h === "O'tdi" ? 'pass' : 'fail') + '" data-eres="' + esc(it.id) + '" data-v="' + esc(h) + '" aria-pressed="' + (m.natija === h) + '">' + (h === "O'tdi" ? '✓ ' : '✕ ') + esc(h) + '</button>'; }).join('') + '</div>' +
       '<input type="text" data-eizoh="' + esc(it.id) + '" placeholder="Izoh (ixtiyoriy)" value="' + esc(m.izoh) + '">' +
       '</div>';
-  }).join('') + '</div>';
+  }).join('') + '<p class="hint" id="e-none" style="display:none;padding:12px 0">Topilmadi.</p></div>';
   if (v.error) html += '<div class="alert bad">' + esc(v.error) + '</div>';
   return html + '</main><footer class="actions"><button class="btn ghost" id="e-back">Orqaga</button><button class="btn" id="e-save"' + (v.saving ? ' disabled' : '') + '>' + (v.saving ? 'Saqlanmoqda…' : 'Saqlash') + '</button></footer>';
 }
@@ -871,6 +878,7 @@ document.addEventListener('input', function(e){
   if (t.dataset && t.dataset.izoh && state.dayv && state.screen === 'day') state.dayv.marks[t.dataset.izoh].izoh = t.value;
   if (t.dataset && t.dataset.eizoh && state.examv) state.examv.marks[t.dataset.eizoh].izoh = t.value;
   if (t.dataset && t.dataset.ball && state.examv) examBallInput(t);
+  if (t.id === 'e-q' && state.examv) { state.examv.q = t.value; examFilter(); }
 });
 document.addEventListener('change', function(e){
   var t = e.target;
