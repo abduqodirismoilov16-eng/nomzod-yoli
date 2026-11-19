@@ -23,7 +23,8 @@ var SHEETS = {
   QOLLANMALAR: "Qo'llanmalar",
   YUBORISHLAR: 'Yuborishlar',
   SAVOLLAR: 'Savollar',
-  ALOQA: 'Aloqa'
+  ALOQA: 'Aloqa',
+  GURUH_TARIXI: 'Guruh_tarixi'
 };
 
 var HEADERS = {
@@ -47,7 +48,8 @@ var HEADERS = {
   "Qo'llanmalar": ['Kun', 'Tartib', 'Nomi', 'Turi', 'Fayl ID', 'Faol', "Qo'shilgan"],
   Yuborishlar: ['Sana', 'Guruh', 'Kun', 'Nomzod ID', "F.I.Sh.", 'Holat', "O'qidi", 'Ochilgan'],
   Savollar: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Guruh', 'Savol', 'Javob', 'Javob sanasi'],
-  Aloqa: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Usul', 'Natija', "O'qish kuni", 'Izoh', 'HR']
+  Aloqa: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Usul', 'Natija', "O'qish kuni", 'Izoh', 'HR'],
+  Guruh_tarixi: ['Sana', 'Nomzod ID', "F.I.Sh.", 'Eski guruh', 'Yangi guruh', 'Eski holat', 'Imtihon balli', 'Kelgan kunlar', 'Sabab', 'HR']
 };
 
 var DEFAULT_SETTINGS = [
@@ -142,6 +144,7 @@ function doPost(e) {
       case 'recent': ensureSchema_(); return json_(recent_(data.filter));
       case 'addContact': return json_(addContact_(data, user));
       case 'setNoShow': return json_(setNoShow_(data, user));
+      case 'changeGroup': return json_(changeGroup_(data, user));
       case 'groupCandidates': return json_({ ok: true, items: groupCandidates_() });
       case 'createGroup': return json_(createGroup_(data));
       case 'addToGroup': return json_(addToGroup_(data));
@@ -908,7 +911,7 @@ function getCandidate_(d) {
       canChangeDecision: PRE_GROUP.indexOf(n['Holat']) > -1,
       aloqa: contactsOf_(id), oqishKuni: n["O'qish kuni"] ? fmtDate_(n["O'qish kuni"]) : '',
       boshlagan: n['Boshlagan sana'] ? fmtDate_(n['Boshlagan sana']) : '', sabab: n['Kelmaslik sababi'] || '',
-      natija: n['Aloqa natijasi'] || '' }
+      natija: n['Aloqa natijasi'] || '', guruhInfo: groupInfo_(n['Guruh'], id), tarix: groupHistory_(id) }
   };
 }
 
@@ -1095,6 +1098,90 @@ function addContact_(d, user) {
     if (holat !== m['Holat']) setCell_(n, m._row, 'Holat', holat);
     setCell_(n, m._row, 'Yangilangan', now);
     return { ok: true, holat: holat };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Nomzod guruhini o'zgartirish (yoki guruhdan chiqarish)
+// ---------------------------------------------------------------------------
+/** Nomzod guruhda nechta kun kelgan (Keldi/Kechikdi) */
+function presentDays_(attRows, group, id) {
+  var days = {};
+  attRows.forEach(function (a) {
+    if (String(a['Guruh']) !== String(group) || String(a['Nomzod ID']) !== String(id)) return;
+    if (a['Holat'] === ATT.PRESENT || a['Holat'] === ATT.LATE) days[Number(a['Kun'])] = true;
+  });
+  return Object.keys(days).length;
+}
+
+/** Kartochka uchun hozirgi guruh haqida qisqa ma'lumot */
+function groupInfo_(group, id) {
+  if (!group) return null;
+  var g = groupRow_(group) || {};
+  return { start: fmtDate_(g['Boshlanish sanasi']), exam: fmtDate_(g['Imtihon sanasi']),
+    kelgan: presentDays_(table_(SHEETS.DAVOMAT).rows, group, id) };
+}
+
+/** Nomzodning oldingi guruhlari (Guruh_tarixi varag'idan), eng yangisi birinchi */
+function groupHistory_(id) {
+  var sh = sheet_(SHEETS.GURUH_TARIXI);
+  if (!sh) return [];
+  var groups = {};
+  table_(SHEETS.GURUHLAR).rows.forEach(function (g) { groups[String(g['Guruh'])] = g; });
+  return table_(SHEETS.GURUH_TARIXI).rows.filter(function (r) { return String(r['Nomzod ID']) === String(id); }).map(function (r) {
+    var g = groups[String(r['Eski guruh'])] || {};
+    return { sana: fmtDate_(r['Sana']), eski: String(r['Eski guruh'] || ''), yangi: String(r['Yangi guruh'] || ''),
+      holat: String(r['Eski holat'] || ''), ball: r['Imtihon balli'] === '' ? '' : String(r['Imtihon balli']),
+      kelgan: r['Kelgan kunlar'] === '' ? '' : Number(r['Kelgan kunlar']), sabab: String(r['Sabab'] || ''), hr: String(r['HR'] || ''),
+      start: fmtDate_(g['Boshlanish sanasi']), exam: fmtDate_(g['Imtihon sanasi']) };
+  }).reverse();
+}
+
+/**
+ * Nomzodni boshqa guruhga o'tkazadi (d.group) yoki guruhdan chiqaradi (d.group = '').
+ * Eski guruhdagi davomat/imtihon yozuvlari o'chirilmaydi: ular eski guruh nomi bilan qoladi,
+ * o'tkazish esa Guruh_tarixi varag'iga yoziladi. Yangi guruhda nomzod 0 dan boshlaydi.
+ */
+function changeGroup_(d, user) {
+  var id = String(d.id || ''), target = String(d.group || '');
+  ensureSchema_();
+  ensureSheet_(SHEETS.GURUH_TARIXI);
+  return withLock_(function () {
+    var n = table_(SHEETS.NOMZODLAR), m = findRow_(n, id);
+    if (!m) throw userError_('Nomzod topilmadi: ' + id, 'notfound');
+    var old = String(m['Guruh'] || '');
+    if (!old) throw userError_("Nomzod hali guruhga qo'shilmagan. Uni «Guruhlar» bo'limidan qo'shing", 'validation');
+    if (old === target) throw userError_('Nomzod allaqachon shu guruhda', 'validation');
+    var g = table_(SHEETS.GURUHLAR), gr = null;
+    if (target) {
+      gr = g.rows.filter(function (r) { return String(r['Guruh']) === target; })[0];
+      if (!gr) throw userError_('Guruh topilmadi', 'validation');
+    }
+    var att = table_(SHEETS.DAVOMAT).rows, now = new Date();
+    var h = {};
+    h['Sana'] = now; h['Nomzod ID'] = id; h["F.I.Sh."] = m["F.I.Sh."]; h['Eski guruh'] = old; h['Yangi guruh'] = target || 'Guruhsiz';
+    h['Eski holat'] = m['Holat']; h['Imtihon balli'] = m['Imtihon balli']; h['Kelgan kunlar'] = presentDays_(att, old, id);
+    h['Sabab'] = String(d.sabab || '').slice(0, 300); h['HR'] = user && user.name || '';
+    appendObj_(sheet_(SHEETS.GURUH_TARIXI), HEADERS.Guruh_tarixi, h);
+
+    var holat = target ? STATUS.STUDYING : STATUS.NEW;
+    var first = target ? firstPresent_(att, target, id) : 0;
+    setCell_(n, m._row, 'Guruh', target);
+    setCell_(n, m._row, 'Holat', holat);
+    setCell_(n, m._row, 'Qoldirgan kunlar', 0);
+    setCell_(n, m._row, 'Imtihon balli', '');
+    setCell_(n, m._row, 'Boshlagan sana', first ? dayDate_(gr['Boshlanish sanasi'], first) : '');
+    setCell_(n, m._row, 'Kelmaslik sababi', '');
+    setCell_(n, m._row, 'Yangilangan', now);
+
+    // Guruhlardagi nomzodlar sonini yangilaymiz
+    var counts = {};
+    n.rows.forEach(function (r) { var k = r === m ? target : String(r['Guruh'] || ''); if (k) counts[k] = (counts[k] || 0) + 1; });
+    [old, target].forEach(function (name) {
+      var row = name && g.rows.filter(function (r) { return String(r['Guruh']) === name; })[0];
+      if (row) setCell_(g, row._row, 'Nomzodlar soni', counts[name] || 0);
+    });
+    return { ok: true, holat: holat, group: target, old: old };
   });
 }
 

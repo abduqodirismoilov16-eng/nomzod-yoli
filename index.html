@@ -143,6 +143,11 @@ input[type=search]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--a
 .pick{display:flex;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line);cursor:pointer}
 .pick:last-child{border-bottom:none}
 .pick input{width:22px;height:22px;accent-color:var(--accent);flex-shrink:0;margin:0}
+.gopt{display:flex;gap:12px;align-items:center;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--fg);font:inherit;text-align:left;cursor:pointer;width:100%}
+.gopt[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.gopt .r{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);flex-shrink:0}
+.gopt[aria-pressed="true"] .r{border:6px solid var(--accent)}
+.gopt b{display:block}.gopt small{display:block;color:var(--muted);font-size:12.5px}
 .demo{font-size:12px;background:var(--warn-soft);color:var(--warn);text-align:center;padding:6px}
 </style>
 </head>
@@ -921,7 +926,7 @@ function candHtml(){
   html += '<div style="display:flex;gap:6px;flex-wrap:wrap">' + statusPill(m.holat) + (m.guruh ? '<span class="pill">Guruh ' + esc(m.guruh) + '</span>' : '') +
     (m.qoldirgan ? '<span class="pill warn">' + esc(m.qoldirgan) + ' kun qoldirgan</span>' : '') + (m.imtihon !== '' && m.imtihon != null ? '<span class="pill ok">Imtihon: ' + esc(m.imtihon) + '</span>' : '') + '</div>';
   html += '<p class="hint">Suhbat: ' + esc(m.suhbat) + (m.hr ? ' · HR: ' + esc(m.hr) : '') + (m.yangilangan && m.yangilangan !== m.suhbat ? ' · yangilangan ' + esc(m.yangilangan) : '') + (c.data.telefon ? ' · <a href="tel:+' + esc(digits(c.data.telefon)) + '">' + esc(c.data.telefon) + '</a>' : '') + '</p>';
-  html += contactCardHtml(m) + trainingCardHtml(m);
+  html += groupCardHtml(m) + contactCardHtml(m) + trainingCardHtml(m);
   var d = Object.assign(emptyAnketa(), c.data);
   html += '<div class="card">' + summaryHtml(d) + '</div>';
   return html + '</main><footer class="actions"><button class="btn ghost" id="c-back">Orqaga</button><button class="btn" id="c-edit"' + (c.stale ? ' disabled' : '') + '>' + (c.stale ? 'Yangilanmoqda…' : 'Tahrirlash') + '</button></footer>' + sheetHtml();
@@ -950,17 +955,66 @@ function contactCardHtml(m){
 function trainingCardHtml(m){
   var body = '', btn = '';
   if (m.holat === ST.NEW) { body = 'Hali guruhga qo\'shilmagan.' + (m.oqishKuni ? ' O\'qish kuni: <b>' + esc(m.oqishKuni) + '</b>' : ''); btn = '<button type="button" class="btn danger small" id="ns-open">O\'qishga kelmadi deb belgilash</button>'; }
-  else if (notStarted(m)) { body = 'Guruh ' + esc(m.guruh) + '. <b>Hali bir kun ham darsga kelmagan.</b>' + (m.qoldirgan ? ' ' + esc(m.qoldirgan) + ' kun qoldirdi.' : ''); btn = '<button type="button" class="btn danger small" id="ns-open">O\'qishga kelmadi deb belgilash</button>'; }
+  else if (notStarted(m)) { body = '<b>Hali bir kun ham darsga kelmagan.</b>' + (m.qoldirgan ? ' ' + esc(m.qoldirgan) + ' kun qoldirdi.' : ''); btn = '<button type="button" class="btn danger small" id="ns-open">O\'qishga kelmadi deb belgilash</button>'; }
   else if (m.holat === ST.STUDYING) body = '<span style="color:var(--ok);font-weight:600">✓ O\'qishni boshlagan: ' + esc(m.boshlagan) + '</span>' + (m.guruh ? ' · Guruh ' + esc(m.guruh) : '');
   else if (m.holat === ST.NOSHOW) { body = '<b>O\'qishga kelmadi.</b>' + (m.sabab ? ' Sabab: ' + esc(m.sabab) : '') + (m.guruh ? ' · Guruh ' + esc(m.guruh) : ''); btn = '<button type="button" class="btn ghost small" id="ns-undo">Qayta taklif qilish</button>'; }
   else if (m.holat === ST.EXPELLED) body = (m.boshlagan ? 'O\'qishni ' + esc(m.boshlagan) + ' da boshlagan, keyin ' : '') + esc(m.qoldirgan || 2) + ' kun qoldirgani uchun chetlatildi.';
   else return '';
   return '<div class="card"><span class="lbl up">O\'qish</span><div class="hint" style="color:var(--fg)">' + body + '</div>' + btn + '</div>';
 }
+/* ---- Guruh: hozirgi guruh, oldingi guruhlar va guruhni o'zgartirish ---- */
+function groupStateText(m){
+  var gi = m.guruhInfo || {};
+  if (m.holat === ST.PASSED || m.holat === ST.FAILED) return esc(m.holat) + (m.imtihon !== '' && m.imtihon != null ? ' (' + esc(m.imtihon) + ' ball)' : '');
+  if (notStarted(m)) return 'Hali darsga kelmagan';
+  if (m.holat === ST.STUDYING) return 'O\'qishda' + (gi.kelgan ? ' · ' + gi.kelgan + ' kun keldi' : '');
+  return esc(m.holat);
+}
+function groupCardHtml(m){
+  var tarix = m.tarix || [];
+  if (!m.guruh && !tarix.length) return '';
+  var gi = m.guruhInfo || {}, html = '<div class="card"><span class="lbl up">Guruh</span>';
+  if (m.guruh) html += '<div class="hint" style="color:var(--fg)"><b>Guruh ' + esc(m.guruh) + '</b>' + (gi.start ? ' · ' + esc(gi.start.slice(0,5)) + ' – ' + esc(gi.exam) : '') + '<br>' + groupStateText(m) + '</div>';
+  else html += '<div class="hint" style="color:var(--fg)">Hozir guruhsiz.</div>';
+  if (tarix.length) {
+    html += '<span class="lbl up" style="margin-top:4px">Oldingi guruhlar</span>' + tarix.map(function(t){
+      var bad = /o'tmadi|chetlat|kelmadi/i.test(t.holat), good = /o'tdi/i.test(t.holat);
+      return '<div class="log"><div class="ic ' + (bad ? 'bad' : good ? 'ok' : '') + '" style="font-size:12px;font-weight:700">' + esc(t.eski) + '</div><div><b>Guruh ' + esc(t.eski) + ' — ' + esc(t.holat) + (t.ball !== '' ? ' (' + esc(t.ball) + ')' : '') + '</b>' +
+        '<small>' + (t.start ? esc(t.start.slice(0,5)) + ' – ' + esc(t.exam.slice(0,5)) + ' · ' : '') + (t.kelgan !== '' ? esc(t.kelgan) + ' kun keldi · ' : '') + '→ ' + esc(t.yangi) + '</small>' +
+        '<small>' + esc(t.sana) + (t.hr ? ' · ' + esc(t.hr) : '') + (t.sabab ? ': ' + esc(t.sabab) : '') + '</small></div></div>';
+    }).join('');
+  }
+  if (m.guruh) html += '<button type="button" class="btn ghost small" id="cg-open">⇄ Guruhni o\'zgartirish</button>';
+  return html + '</div>';
+}
+function groupOptHtml(value, title, sub, picked){
+  return '<button type="button" class="gopt" data-cg="' + esc(value) + '" aria-pressed="' + picked + '"><i class="r"></i><span><b>' + esc(title) + '</b><small>' + esc(sub) + '</small></span></button>';
+}
+function groupStageText(g){
+  var today = todayIso();
+  if (g.start > today) return 'Boshlanish ' + fmtDate(g.start).slice(0,5) + ' · Imtihon ' + fmtDate(g.exam).slice(0,5);
+  if (g.exam && g.exam < today) return 'Tugagan · imtihon ' + fmtDate(g.exam).slice(0,5);
+  var day = Math.floor((new Date(today) - new Date(g.start)) / 864e5) + 1;
+  return 'Boshlangan ' + fmtDate(g.start).slice(0,5) + ' · ' + Math.min(day, 5) + '-kun';
+}
 function sheetHtml(){
   var sh = state.sheet; if (!sh) return '';
   var html = '<div class="dim" id="sh-close"></div><div class="sheet" role="dialog" aria-modal="true">';
-  if (sh.type === 'contact') {
+  if (sh.type === 'group') {
+    var m = state.cand.meta, gs = (state.groups || []).filter(function(g){ return g.group !== m.guruh && g.holat !== 'Yopilgan'; });
+    html += '<h2>Guruhni o\'zgartirish</h2><p class="hint" style="margin:0">Hozir: <b>Guruh ' + esc(m.guruh) + '</b></p>';
+    if (!state.groups) html += '<div class="spinner" style="margin:16px auto"></div>';
+    else if (!gs.length) html += '<p class="hint" style="margin:0">Boshqa guruh yo\'q. Avval «Guruhlar» bo\'limida yangi guruh yarating.</p>';
+    html += gs.map(function(g){ return groupOptHtml(g.group, 'Guruh ' + g.group, groupStageText(g) + ' · ' + (g.total || 0) + ' nomzod', sh.group === g.group); }).join('');
+    html += groupOptHtml('-', 'Guruhdan chiqarish', '«O\'qishga taklif qilindi», guruhsiz', sh.group === '-');
+    html += '<input type="text" id="sh-izoh" placeholder="Sabab (masalan: qayta o\'qish)" value="' + esc(sh.izoh) + '">';
+    if (sh.group) {
+      var gsel = gs.filter(function(g){ return g.group === sh.group; })[0];
+      html += '<div class="alert warn" style="padding:9px 11px;font-size:13px">' + (sh.group === '-' ? 'Nomzod guruhsiz <b>«O\'qishga taklif qilindi»</b> holatiga qaytadi va keyin istalgan guruhga qo\'shiladi.'
+        : 'Guruh ' + esc(sh.group) + ' da holati <b>«O\'qishda»</b> bo\'ladi, qoldirgan kunlar va imtihon balli 0 dan boshlanadi.' + (gsel && gsel.start <= todayIso() ? ' O\'tib ketgan kunlar qoldirilgan hisoblanmaydi.' : '')) +
+        ' Guruh ' + esc(m.guruh) + ' dagi davomat va imtihon natijasi tarixda saqlanadi.</div>';
+    }
+  } else if (sh.type === 'contact') {
     html += '<h2>Xabar berildi</h2><span class="lbl up">Usul</span><div class="seg">' + ["Qo'ng'iroq",'SMS','Telegram'].map(function(u){ return '<button type="button" data-usul="' + esc(u) + '" aria-pressed="' + (sh.usul === u) + '">' + WAY_IC[u] + ' ' + esc(u) + '</button>'; }).join('') + '</div>' +
       '<span class="lbl up">Natija</span><div class="seg">' + RES_LIST.slice(0,3).map(resBtn).join('') + '</div><div class="seg">' + RES_LIST.slice(3).map(resBtn).join('') + '</div>' +
       '<div class="row2"><div class="field"><label for="sh-sana">Sana</label><input type="date" id="sh-sana" value="' + esc(sh.sana) + '"></div><div class="field"><label for="sh-oqish">O\'qish kuni</label><input type="date" id="sh-oqish" value="' + esc(sh.oqish) + '"></div></div>' +
@@ -981,8 +1035,26 @@ function openSheet(type, usul){
     : { type:'noshow', sabab:'', izoh:'', saving:false, error:'' };
   keepScroll();
 }
+function openGroupSheet(){
+  state.sheet = { type:'group', group:'', izoh:'', saving:false, error:'' };
+  if (!state.groups && cache().groups) state.groups = cache().groups;
+  keepScroll();
+  api('groups').then(function(j){ state.groups = j.items || []; cachePut('groups', state.groups); if (state.sheet && state.sheet.type === 'group') keepScroll(); })
+    .catch(function(e){ if (!state.groups) state.groups = []; if (state.sheet && state.sheet.type === 'group') { state.sheet.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; keepScroll(); } });
+}
 function saveSheet(){
   var sh = state.sheet, c = state.cand, call, okText;
+  if (sh.type === 'group') {
+    if (!sh.group) { sh.error = 'Guruhni tanlang'; keepScroll(); return; }
+    var target = sh.group === '-' ? '' : sh.group, old = c.meta.guruh;
+    sh.saving = true; sh.error = ''; keepScroll();
+    api('changeGroup', { id: c.id, group: target, sabab: sh.izoh }).then(function(){
+      state.sheet = null; state.groups = null; delete cache().groups; cacheSave();
+      state.flash = { cls:'ok', text: target ? 'Guruh o\'zgartirildi: ' + esc(old) + ' → ' + esc(target) + '.' : 'Nomzod guruh ' + esc(old) + ' dan chiqarildi.' };
+      openCand(c.id, true, true);
+    }).catch(function(e){ sh.saving = false; sh.error = e.message === 'Failed to fetch' ? "Internet aloqasi yo'q." : e.message; keepScroll(); });
+    return;
+  }
   if (sh.type === 'contact') {
     if (!sh.natija) { sh.error = 'Natijani tanlang'; keepScroll(); return; }
     call = api('addContact', { id: c.id, usul: sh.usul, natija: sh.natija, sana: sh.sana, oqish: sh.oqish, izoh: sh.izoh });
@@ -1015,11 +1087,13 @@ document.addEventListener('click', function(e){
   if (t.dataset.contact) return openSheet('contact', t.dataset.contact);
   if (t.id === 'ns-open') return openSheet('noshow');
   if (t.id === 'ns-undo') return undoNoShow();
+  if (t.id === 'cg-open') return openGroupSheet();
   var sh = state.sheet; if (!sh) return;
   if (t.id === 'sh-close' || t.id === 'sh-cancel') { state.sheet = null; keepScroll(); return; }
   if (t.id === 'sh-save') return saveSheet();
   if (t.dataset.usul) { sh.usul = t.dataset.usul; haptic(); keepScroll(); }
   else if (t.dataset.res) { sh.natija = t.dataset.res; sh.error = ''; haptic(); keepScroll(); }
+  else if (t.dataset.cg) { sh.group = t.dataset.cg; sh.error = ''; haptic(); keepScroll(); }
   else if (t.dataset.sabab) { sh.sabab = t.dataset.sabab; sh.error = ''; haptic(); keepScroll(); }
 });
 document.addEventListener('input', function(e){
